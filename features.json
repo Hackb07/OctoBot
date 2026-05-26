@@ -1,0 +1,620 @@
+{
+  "application": {
+    "name": "OctoBot",
+    "description": "Terminal-native AI operations control center built with Rust, Ratatui, Tokio, and Axum.",
+    "status": "current implementation"
+  },
+  "featureGroups": [
+    {
+      "name": "Terminal UI",
+      "status": "available",
+      "features": [
+        {
+          "name": "Ratatui terminal interface",
+          "status": "available",
+          "description": "Keyboard-first terminal UI for operational monitoring and control."
+        },
+        {
+          "name": "Navigation views",
+          "status": "available",
+          "views": [
+            "Dashboard",
+            "Agents",
+            "Incidents",
+            "Research",
+            "Logs",
+            "Infrastructure",
+            "Workflows",
+            "Reports",
+            "Settings"
+          ]
+        },
+        {
+          "name": "Keyboard navigation",
+          "status": "available",
+          "keys": [
+            "1-9",
+            "j",
+            "k",
+            "ArrowDown",
+            "ArrowUp",
+            "Tab",
+            "Shift+Tab",
+            ":",
+            "q"
+          ]
+        },
+        {
+          "name": "Command console",
+          "status": "available",
+          "description": "Bottom command console with Tab autocomplete for supported operational commands."
+        }
+      ]
+    },
+    {
+      "name": "Infrastructure Execution",
+      "status": "available",
+      "features": [
+        {
+          "name": "Allowlisted command execution",
+          "status": "available",
+          "description": "Executes a small set of read-only infrastructure commands as real subprocesses."
+        },
+        {
+          "name": "Allowed commands",
+          "status": "available",
+          "commands": [
+            "docker ps",
+            "kubectl get pods",
+            "journalctl -n N --no-pager",
+            "journalctl -f -n N --no-pager",
+            "systemctl --no-pager --failed",
+            "ps aux",
+            "df -h",
+            "uptime",
+            "ssh <host> uptime"
+          ]
+        },
+        {
+          "name": "Sandbox blocking",
+          "status": "available",
+          "description": "Unsupported, shell-wrapped, or write-oriented commands are blocked by the allowlist."
+        },
+        {
+          "name": "Streaming command output",
+          "status": "available",
+          "description": "Streams stdout and stderr into application state and the Logs view."
+        },
+        {
+          "name": "Command timeout",
+          "status": "available",
+          "description": "Infrastructure commands are terminated after 8 seconds."
+        },
+        {
+          "name": "Continuous journal stream",
+          "status": "available",
+          "command": "journalctl -f -n 0 --no-pager"
+        }
+      ]
+    },
+    {
+      "name": "Runtime Architecture",
+      "status": "available",
+      "features": [
+        {
+          "name": "Typed event bus",
+          "status": "available",
+          "description": "Uses OpsEvent with Tokio mpsc for runtime events."
+        },
+        {
+          "name": "Realtime state snapshots",
+          "status": "available",
+          "description": "Uses Tokio watch channels to publish OpsState snapshots to the UI and API."
+        },
+        {
+          "name": "State reducer",
+          "status": "available",
+          "description": "Central OpsState reducer applies events for commands, agents, workflows, reports, recovery, replay, plugins, runtimes, and graph data."
+        }
+      ]
+    },
+    {
+      "name": "HTTP API",
+      "status": "available",
+      "features": [
+        {
+          "name": "Health endpoint",
+          "status": "available",
+          "method": "GET",
+          "path": "/health"
+        },
+        {
+          "name": "State snapshot endpoint",
+          "status": "available",
+          "method": "GET",
+          "path": "/api/state"
+        },
+        {
+          "name": "Persistent replay events endpoint",
+          "status": "available",
+          "method": "GET",
+          "path": "/api/replay/events"
+        },
+        {
+          "name": "Historical state reconstruction endpoint",
+          "status": "available",
+          "method": "GET",
+          "path": "/api/replay/reconstruct"
+        },
+        {
+          "name": "Semantic memory search endpoint",
+          "status": "available",
+          "method": "GET",
+          "path": "/api/memory/search?q=<query>"
+        },
+        {
+          "name": "Incident similarity search endpoint",
+          "status": "available",
+          "method": "GET",
+          "path": "/api/incidents/similar?q=<query>"
+        },
+        {
+          "name": "Local API binding",
+          "status": "available",
+          "address": "127.0.0.1:7878"
+        }
+      ]
+    },
+    {
+      "name": "Persistent Intelligence Layer",
+      "status": "available",
+      "features": [
+        {
+          "name": "PostgreSQL persistence",
+          "status": "available",
+          "environment": "OCTOBOT_DATABASE_URL",
+          "description": "Persists append-only events and current state tables through SQLx when configured."
+        },
+        {
+          "name": "SQLx migration system",
+          "status": "available",
+          "migrationDirectory": "migrations",
+          "migrationFiles": [
+            "0001_persistent_intelligence.sql"
+          ]
+        },
+        {
+          "name": "Persisted state domains",
+          "status": "available",
+          "tables": [
+            "ops_events",
+            "incidents",
+            "workflows",
+            "explainability_records",
+            "agent_state",
+            "semantic_memory"
+          ]
+        },
+        {
+          "name": "Append-only event store",
+          "status": "available",
+          "description": "Every applied OpsEvent is serialized to PostgreSQL with its current OpsState snapshot when the database is configured."
+        },
+        {
+          "name": "Event replay engine",
+          "status": "available",
+          "description": "Loads persisted events in insertion order for replay."
+        },
+        {
+          "name": "Historical state reconstruction",
+          "status": "available",
+          "description": "Rebuilds OpsState by applying persisted events to an empty replay baseline."
+        },
+        {
+          "name": "Qdrant integration",
+          "status": "available",
+          "environment": [
+            "OCTOBOT_QDRANT_URL",
+            "OCTOBOT_QDRANT_COLLECTION"
+          ]
+        },
+        {
+          "name": "Embedding pipeline",
+          "status": "available",
+          "environment": "OCTOBOT_EMBEDDING_URL",
+          "requestContract": {
+            "input": "text to embed"
+          },
+          "responseContract": {
+            "embedding": [
+              "f32"
+            ]
+          }
+        },
+        {
+          "name": "Semantic memory retrieval",
+          "status": "available",
+          "description": "Embeds a query and searches Qdrant for operational memory."
+        },
+        {
+          "name": "Incident similarity search",
+          "status": "available",
+          "description": "Runs source-filtered semantic search over incident memory."
+        },
+        {
+          "name": "Operational memory indexing",
+          "status": "available",
+          "description": "Indexes incident, explainability, research, and command execution events into Qdrant when configured."
+        }
+      ]
+    },
+    {
+      "name": "Incident Operations",
+      "status": "available",
+      "features": [
+        {
+          "name": "Incident detection command",
+          "status": "available",
+          "command": "investigate <topic>",
+          "description": "Creates an incident event and starts the hardcoded incident workflow."
+        },
+        {
+          "name": "Incident table",
+          "status": "available",
+          "description": "Displays incident id, severity, service, status, and active hypothesis."
+        },
+        {
+          "name": "Incident workflow",
+          "status": "available",
+          "limitations": [
+            "Single hardcoded flow",
+            "Not a configurable workflow engine"
+          ],
+          "steps": [
+            "Detect issue",
+            "Spawn and assign agents",
+            "Run allowlisted evidence commands",
+            "Validate evidence",
+            "Generate report state",
+            "Propose dry-run remediation"
+          ]
+        },
+        {
+          "name": "Incident replay",
+          "status": "available",
+          "commands": [
+            "replay start",
+            "replay step"
+          ],
+          "limitations": [
+            "Replay is an in-memory cursor over retained events",
+            "Replay is not persisted as a full session player"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Agents",
+      "status": "partially_available",
+      "features": [
+        {
+          "name": "Dynamic agent registry",
+          "status": "available",
+          "description": "Agents are registered from runtime events instead of startup fixtures.",
+          "events": [
+            "AgentSpawned",
+            "RuntimeUpdated",
+            "AgentLifecycleChanged",
+            "AgentTelemetryRecorded",
+            "ExplainabilityRecorded"
+          ]
+        },
+        {
+          "name": "Async agent runtime manager",
+          "status": "available",
+          "description": "Runtime manager handles agent registration and task lifecycle transitions inside the Tokio event loop."
+        },
+        {
+          "name": "Provider-backed AI agents",
+          "status": "partially_available",
+          "providers": [
+            "OpenAI",
+            "Ollama",
+            "OpenRouter"
+          ],
+          "environment": [
+            "OCTOBOT_OPENAI_API_KEY",
+            "OCTOBOT_OPENAI_BASE_URL",
+            "OCTOBOT_OPENAI_MODEL",
+            "OCTOBOT_OLLAMA_URL",
+            "OCTOBOT_OLLAMA_MODEL",
+            "OCTOBOT_OPENROUTER_API_KEY",
+            "OCTOBOT_OPENROUTER_BASE_URL",
+            "OCTOBOT_OPENROUTER_MODEL"
+          ],
+          "limitations": [
+            "No autonomous reasoning loops",
+            "No persistent agent memory"
+          ]
+        },
+        {
+          "name": "Tool-calling request support",
+          "status": "available",
+          "description": "AI provider requests can include structured function/tool schemas and parse returned tool calls."
+        },
+        {
+          "name": "Spawn agent command",
+          "status": "available",
+          "command": "spawn-agent research",
+          "description": "Registers a new research agent through the runtime event pipeline."
+        },
+        {
+          "name": "Coordination graph",
+          "status": "available",
+          "description": "Tracks agent-to-agent and workflow-to-agent links with protocol, message, confidence, and timestamp."
+        },
+        {
+          "name": "Runtime tracking",
+          "status": "available",
+          "command": "runtime set <agent> <kind> <endpoint>",
+          "runtimeKinds": [
+            "local",
+            "remote",
+            "container",
+            "cluster"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Real Infrastructure Integrations",
+      "status": "partially_available",
+      "features": [
+        {
+          "name": "Docker API integration",
+          "status": "available",
+          "description": "Discovers containers through the Docker Engine HTTP API over a Unix socket."
+        },
+        {
+          "name": "Kubernetes API integration",
+          "status": "available",
+          "description": "Discovers pods through the Kubernetes API when configured or running in cluster."
+        },
+        {
+          "name": "Prometheus integration",
+          "status": "available",
+          "description": "Discovers live targets through the Prometheus up query."
+        },
+        {
+          "name": "Loki integration",
+          "status": "available",
+          "description": "Provides a real Loki query client when OCTOBOT_LOKI_URL is configured."
+        },
+        {
+          "name": "OpenSearch integration",
+          "status": "available",
+          "description": "Provides a real OpenSearch search client when OCTOBOT_OPENSEARCH_URL is configured."
+        },
+        {
+          "name": "Infrastructure discovery",
+          "status": "available",
+          "description": "Runtime emits InfrastructureSnapshotRecorded only when configured integrations return real nodes."
+        },
+        {
+          "name": "Topology mapping",
+          "status": "not_implemented"
+        },
+        {
+          "name": "Dependency graph generation",
+          "status": "not_implemented"
+        }
+      ]
+    },
+    {
+      "name": "Research And Knowledge",
+      "status": "partially_simulated",
+      "features": [
+        {
+          "name": "Research view",
+          "status": "available",
+          "description": "Shows research profile, evidence signals, knowledge graph links, and explainability records."
+        },
+        {
+          "name": "Research confidence refresh",
+          "status": "available",
+          "command": "research confidence",
+          "description": "Refreshes research confidence state from current signals."
+        },
+        {
+          "name": "Knowledge graph",
+          "status": "available",
+          "description": "Tracks nodes and edges for services, incidents, deployments, metrics, and recovery actions."
+        },
+        {
+          "name": "Graph link command",
+          "status": "available",
+          "command": "graph link <from> <relation> <to>"
+        },
+        {
+          "name": "Research content",
+          "status": "partially_simulated",
+          "limitations": [
+            "Research tree includes hardcoded lines",
+            "External provider docs are not connected",
+            "Qdrant retrieval is available through the semantic memory API when configured, but the Research TUI view does not query it yet"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Workflows And Recovery",
+      "status": "available",
+      "features": [
+        {
+          "name": "Workflow monitor",
+          "status": "available",
+          "description": "Displays workflow id, name, owner, stage, and progress."
+        },
+        {
+          "name": "YAML DAG workflow definitions",
+          "status": "available",
+          "environment": "OCTOBOT_WORKFLOW_DIR",
+          "description": "Loads typed YAML workflow definitions with DAG validation, cycle detection, retry policy parsing, and approval checkpoint parsing."
+        },
+        {
+          "name": "Autonomous recovery queue",
+          "status": "available",
+          "description": "Tracks recovery proposals with target, status, required role, evidence, and risk."
+        },
+        {
+          "name": "Recovery proposal command",
+          "status": "available",
+          "command": "recover <target>",
+          "description": "Creates a dry-run-only recovery action."
+        },
+        {
+          "name": "Recovery approval command",
+          "status": "available",
+          "command": "approve <recovery_id>",
+          "description": "Approves or rejects recovery based on the current role."
+        },
+        {
+          "name": "Dry-run remediation gate",
+          "status": "available",
+          "description": "Write actions are recorded and approved in state, but destructive commands are dry-run only."
+        },
+        {
+          "name": "RBAC",
+          "status": "available",
+          "roles": [
+            "Admin",
+            "Operator",
+            "ReadOnly",
+            "SecurityReviewer"
+          ],
+          "approvalRoles": [
+            "Admin",
+            "Operator"
+          ]
+        },
+        {
+          "name": "Role command",
+          "status": "available",
+          "command": "role <admin|operator|readonly|security>"
+        }
+      ]
+    },
+    {
+      "name": "Reports And Explainability",
+      "status": "available",
+      "features": [
+        {
+          "name": "Explainability ledger",
+          "status": "available",
+          "description": "Records action, reason, evidence, confidence, tools used, and timestamp."
+        },
+        {
+          "name": "Reports view",
+          "status": "available",
+          "description": "Displays report queue entries and recent explainability records."
+        },
+        {
+          "name": "JSON report generation",
+          "status": "available",
+          "command": "generate-report <topic>",
+          "outputDirectory": "reports",
+          "description": "Writes structured JSON reports containing state, incidents, workflows, executions, explainability, timeline, recovery actions, research profile, plugins, runtimes, knowledge graph, and sandbox policy."
+        }
+      ]
+    },
+    {
+      "name": "Settings And Integrations",
+      "status": "state_only",
+      "features": [
+        {
+          "name": "Settings tabs",
+          "status": "available",
+          "tabs": [
+            "OpenRouter",
+            "PostgreSQL",
+            "Qdrant",
+            "Prometheus",
+            "Loki/OpenSearch"
+          ]
+        },
+        {
+          "name": "Plugin registry",
+          "status": "available",
+          "commands": [
+            "plugin add <name> <kind>",
+            "plugin enable <name>",
+            "plugin disable <name>"
+          ],
+          "pluginKinds": [
+            "tool",
+            "workflow",
+            "integration",
+            "agent"
+          ]
+        },
+        {
+          "name": "Sandbox policy state",
+          "status": "available",
+          "command": "sandbox policy <role> <keyword>",
+          "description": "Updates role-aware sandbox approval state."
+        },
+        {
+          "name": "External integrations",
+          "status": "planned_or_boundary_only",
+          "integrations": [
+            "OpenRouter",
+            "PostgreSQL",
+            "Qdrant",
+            "Prometheus",
+            "Loki",
+            "OpenSearch",
+            "WebSockets"
+          ],
+          "limitations": [
+            "Configuration boundaries are shown in UI",
+            "External services are not fully wired"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Metrics And Timeline",
+      "status": "partially_simulated",
+      "features": [
+        {
+          "name": "Dashboard metrics",
+          "status": "simulated",
+          "metrics": [
+            "Prometheus SLO burn",
+            "Agent throughput",
+            "Evidence coverage"
+          ]
+        },
+        {
+          "name": "Infrastructure health table",
+          "status": "simulated",
+          "description": "Displays seeded infrastructure nodes with synthetic health, CPU, and memory values."
+        },
+        {
+          "name": "Time-travel correlation timeline",
+          "status": "available",
+          "description": "Correlates deployments, incidents, commands, metrics, agent work, and recovery proposals."
+        }
+      ]
+    }
+  ],
+  "knownLimitations": [
+    "Agents are dynamically registered and provider clients exist, but autonomous reasoning loops and persistent per-agent memory are not implemented yet.",
+    "Infrastructure health can come from configured Docker, Kubernetes, and Prometheus integrations, but the seeded dashboard still contains synthetic fallback nodes until Phase 3 fully removes them.",
+    "Workflow progress advances through a simple tick loop for seeded workflows.",
+    "YAML DAG workflow definitions load and validate, but the old incident workflow is still hardcoded and DAG node scheduling/execution is not complete.",
+    "Recovery actions remain dry-run only.",
+    "The TUI replay cursor is in-memory, while persistent replay/reconstruction is available through the API.",
+    "PostgreSQL monitoring, topology mapping, dependency graph generation, DAG parallel execution, DAG rollback, and AI reasoning loops remain incomplete."
+  ]
+}

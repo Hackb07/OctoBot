@@ -1,0 +1,260 @@
+{
+  "id": "report-1779804283878955718",
+  "topic": "generate-report my_test_report",
+  "conclusion": "Report generated from incident timeline and explainability ledger",
+  "confidence": 82,
+  "generated_at": "1779804283",
+  "workspace": "octobot-ops",
+  "environment": "prod / us-east",
+  "incidents": [
+    {
+      "id": "inc-042",
+      "service": "edge-nginx",
+      "severity": "SEV2",
+      "hypothesis": "TLS handshakes queueing after ingress rollout",
+      "status": "investigating"
+    },
+    {
+      "id": "inc-039",
+      "service": "auth-service",
+      "severity": "SEV3",
+      "hypothesis": "Token cache saturation during deploy window",
+      "status": "monitoring"
+    }
+  ],
+  "workflows": [
+    {
+      "id": "wf-2041",
+      "name": "nginx latency investigation",
+      "owner": "triage-01",
+      "stage": "Prometheus query fanout",
+      "progress": 33
+    },
+    {
+      "id": "wf-2042",
+      "name": "auth log anomaly scan",
+      "owner": "logscan-02",
+      "stage": "Loki histogram clustering",
+      "progress": 60
+    },
+    {
+      "id": "wf-2043",
+      "name": "incident report generation",
+      "owner": "reporter-01",
+      "stage": "Evidence graph assembly",
+      "progress": 15
+    }
+  ],
+  "executions": [
+    {
+      "id": "live-journalctl",
+      "command": "journalctl -f -n 0 --no-pager",
+      "status": "failed",
+      "exit_code": null,
+      "output_preview": "command timed out after 8s\nMay 26 19:33:55 NoBodyWill pipewire-pulse[1408]: mod.protocol-pulse: setsockopt(SO_PRIORITY) failed: Bad file descriptor\nMay 26 19:33:55 NoBodyWill pipewire-pulse[1408]: mod.protocol-pulse: client 0x555c06bceb40: no peercred: Bad file descriptor\nMay 26 19:33:55 NoBodyWill pipewire-pulse[1408]: mod.protocol-pulse: setsockopt(SO_PRIORITY) failed: Bad file descriptor\nMay 26 19:33:55 NoBodyWill pipewire-pulse[1408]: mod.protocol-pulse: client 0x555c06b094a0: no peercred: Bad file descriptor\nMay 26 19:33:55 NoBodyWill pipewire-pulse[1408]: mod.protocol-pulse: setsockopt(SO_PRIORITY) failed: Bad file descriptor\nMay 26 19:33:55 NoBodyWill pipewire-pulse[1408]: mod.protocol-pulse: client 0x555c0779ad20: no peercred: Bad file descriptor\nMay 26 19:33:55 NoBodyWill pipewire-pulse[1408]: mod.protocol-pulse: setsockopt(SO_PRIORITY) failed: Bad file descriptor\nMay 26 19:33:55 NoBodyWill pipewire-pulse[1408]: mod.protocol-pulse: client 0x555c06b26d80: no peercred: Bad file descriptor\nMay 26 19:33:55 NoBodyWill pipewire-pulse[1408]: mod.protocol-pulse: setsockopt(SO_PRIORITY) failed: Bad file descriptor\nMay 26 19:33:55 NoBodyWill pipewire-pulse[1408]: mod.protocol-pulse:",
+      "timestamp": "1779804227"
+    }
+  ],
+  "explainability": [
+    {
+      "id": "exp-0001",
+      "action": "Open incident inc-042 investigation",
+      "why": "Latency alert and ingress rollout timing overlap require triage.",
+      "evidence": [
+        "edge-nginx p95 crossed 820ms for 4m",
+        "deploy-1188 occurred inside the alert window"
+      ],
+      "confidence": 72,
+      "tools_used": [
+        "prometheus",
+        "loki"
+      ],
+      "timestamp": "1779804227"
+    }
+  ],
+  "coordination_links": [],
+  "timeline": [
+    {
+      "id": "time-0001",
+      "timestamp": "1779804227",
+      "category": "Deployment",
+      "source": "deploy-1188",
+      "summary": "edge-nginx ingress rollout started inside alert window",
+      "cpu": null,
+      "memory": null,
+      "related_incident": "inc-042"
+    },
+    {
+      "id": "time-0002",
+      "timestamp": "1779804227",
+      "category": "Incident",
+      "source": "alertmanager",
+      "summary": "p95 latency crossed threshold after rollout",
+      "cpu": 72,
+      "memory": 64,
+      "related_incident": "inc-042"
+    },
+    {
+      "id": "time-live-journalctl",
+      "timestamp": "1779804227",
+      "category": "Log",
+      "source": "journalctl -f -n 0 --no-pager",
+      "summary": "Continuous real system log stream for Logs tab",
+      "cpu": 72,
+      "memory": 64,
+      "related_incident": "inc-042"
+    },
+    {
+      "id": "time-research-generate-report my_test_report",
+      "timestamp": "1779804271",
+      "category": "Agent",
+      "source": "generate-report my_test_report",
+      "summary": "Report generated from incident timeline and explainability ledger. Stored JSON report at reports/report-1779804271516547926.json",
+      "cpu": null,
+      "memory": null,
+      "related_incident": "generate-report my_test_report"
+    }
+  ],
+  "recovery_actions": [
+    {
+      "id": "rec-0001",
+      "name": "Restart edge-nginx",
+      "command": "systemctl restart edge-nginx",
+      "target": "edge-nginx",
+      "status": "AwaitingApproval",
+      "risk": "brief connection draining and reload churn",
+      "requires_role": "Operator",
+      "evidence": [
+        "latency alert overlaps ingress rollout",
+        "systemd status check is required before execution"
+      ],
+      "requested_by": "workflow-engine",
+      "approved_by": null,
+      "dry_run_only": true,
+      "timestamp": "1779804227"
+    }
+  ],
+  "research_profile": {
+    "subject": "generate-report my_test_report",
+    "evidence_reliability": 77,
+    "contradiction_count": 0,
+    "ranking": 100,
+    "last_reviewed": "1779804271",
+    "signals": [
+      {
+        "source": "explainability",
+        "evidence": "Report generated from incident timeline and explainability ledger. Stored JSON report at reports/report-1779804271516547926.json",
+        "reliability": 82,
+        "contradiction": false
+      },
+      {
+        "source": "incidents",
+        "evidence": "2 active incidents",
+        "reliability": 65,
+        "contradiction": false
+      },
+      {
+        "source": "timeline",
+        "evidence": "3 correlated timeline events",
+        "reliability": 74,
+        "contradiction": false
+      },
+      {
+        "source": "knowledge-graph",
+        "evidence": "latency metric correlates with edge-nginx",
+        "reliability": 88,
+        "contradiction": false
+      }
+    ]
+  },
+  "plugins": [
+    {
+      "name": "openrouter-research",
+      "kind": "Integration",
+      "description": "LLM-backed research route for runbook synthesis",
+      "version": "0.1.0",
+      "status": "Registered",
+      "owner": "platform"
+    },
+    {
+      "name": "prometheus-triage",
+      "kind": "Tool",
+      "description": "Prometheus evidence collector for active incidents",
+      "version": "0.1.0",
+      "status": "Enabled",
+      "owner": "triage-01"
+    },
+    {
+      "name": "workflow-rca",
+      "kind": "Workflow",
+      "description": "Auto-generates report-ready RCA outlines",
+      "version": "0.1.0",
+      "status": "Registered",
+      "owner": "reporter-01"
+    }
+  ],
+  "runtimes": [],
+  "knowledge_nodes": [
+    {
+      "id": "svc-edge-nginx",
+      "label": "edge-nginx",
+      "kind": "service",
+      "confidence": 93
+    },
+    {
+      "id": "inc-042",
+      "label": "incident inc-042",
+      "kind": "incident",
+      "confidence": 89
+    },
+    {
+      "id": "deploy-1188",
+      "label": "deploy-1188",
+      "kind": "deployment",
+      "confidence": 84
+    },
+    {
+      "id": "metric-p95",
+      "label": "latency p95",
+      "kind": "metric",
+      "confidence": 90
+    }
+  ],
+  "knowledge_edges": [
+    {
+      "from": "deploy-1188",
+      "relation": "triggered",
+      "to": "inc-042",
+      "weight": 86,
+      "timestamp": "1779804227"
+    },
+    {
+      "from": "metric-p95",
+      "relation": "correlates-with",
+      "to": "svc-edge-nginx",
+      "weight": 91,
+      "timestamp": "1779804227"
+    },
+    {
+      "from": "inc-042",
+      "relation": "impacts",
+      "to": "svc-edge-nginx",
+      "weight": 88,
+      "timestamp": "1779804227"
+    }
+  ],
+  "sandbox_policy": {
+    "mode": "read-only allowlist",
+    "persisted": true,
+    "approved_roles": [
+      "Admin",
+      "Operator"
+    ],
+    "review_required_for": [
+      "restart",
+      "rollback",
+      "cleanup"
+    ],
+    "updated_at": "1779804227"
+  }
+}

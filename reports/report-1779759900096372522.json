@@ -1,0 +1,147 @@
+{
+  "id": "report-1779759900096372522",
+  "topic": "generate-report incident_042",
+  "conclusion": "Report generated from incident timeline and explainability ledger",
+  "confidence": 82,
+  "generated_at": "1779759900",
+  "workspace": "octobot-ops",
+  "environment": "prod / us-east",
+  "incidents": [
+    {
+      "id": "inc-042",
+      "service": "edge-nginx",
+      "severity": "SEV2",
+      "hypothesis": "TLS handshakes queueing after ingress rollout",
+      "status": "investigating"
+    },
+    {
+      "id": "inc-039",
+      "service": "auth-service",
+      "severity": "SEV3",
+      "hypothesis": "Token cache saturation during deploy window",
+      "status": "monitoring"
+    },
+    {
+      "id": "inc-nginx_latency",
+      "service": "operator-request",
+      "severity": "SEV3",
+      "hypothesis": "Awaiting correlated evidence from workflow engine",
+      "status": "detected"
+    }
+  ],
+  "workflows": [
+    {
+      "id": "wf-2041",
+      "name": "nginx latency investigation",
+      "owner": "triage-01",
+      "stage": "Prometheus query fanout",
+      "progress": 81
+    },
+    {
+      "id": "wf-2042",
+      "name": "auth log anomaly scan",
+      "owner": "logscan-02",
+      "stage": "Loki histogram clustering",
+      "progress": 18
+    },
+    {
+      "id": "wf-2043",
+      "name": "incident report generation",
+      "owner": "reporter-01",
+      "stage": "Evidence graph assembly",
+      "progress": 63
+    },
+    {
+      "id": "wf-inc-nginx_latency",
+      "name": "tier1 incident response",
+      "owner": "workflow-engine",
+      "stage": "Remediation proposal recorded; operator approval required for write action",
+      "progress": 21
+    }
+  ],
+  "executions": [
+    {
+      "id": "live-journalctl",
+      "command": "journalctl -f -n 0 --no-pager",
+      "status": "failed",
+      "exit_code": null,
+      "output_preview": "command timed out after 8s\nMay 26 07:14:26 NoBodyWill uwsm_app-daemon[1267]: received: app -- xdg-terminal-exec --dir=/home/hackb/openAi/OctoBot\nMay 26 07:14:26 NoBodyWill uwsm_app-daemon[1267]: sent: exec systemd-run --user --scope --slice=app-graphical.slice '--unit=app-Hyprland-xdg\\x2dterminal\\x2dexec-d5f4d686.scope' --description=xdg-terminal-exec --quiet --collect --same-dir -- xdg-terminal-exec --dir=/home/hackb/openAi/OctoBot\nMay 26 07:14:26 NoBodyWill systemd[991]: Started xdg-terminal-exec.",
+      "timestamp": "1779759858"
+    },
+    {
+      "id": "cmd-1779759864361275944",
+      "command": "docker ps",
+      "status": "completed",
+      "exit_code": 0,
+      "output_preview": "CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES",
+      "timestamp": "1779759864"
+    },
+    {
+      "id": "cmd-1779759864361285862",
+      "command": "kubectl get pods",
+      "status": "failed",
+      "exit_code": null,
+      "output_preview": "failed to start command: No such file or directory (os error 2)",
+      "timestamp": "1779759864"
+    },
+    {
+      "id": "cmd-1779759864361288046",
+      "command": "systemctl --no-pager --failed",
+      "status": "completed",
+      "exit_code": 0,
+      "output_preview": "  UNIT LOAD ACTIVE SUB DESCRIPTION\n\n0 loaded units listed.",
+      "timestamp": "1779759864"
+    },
+    {
+      "id": "cmd-1779759864361289750",
+      "command": "journalctl -n 30 --no-pager",
+      "status": "completed",
+      "exit_code": 0,
+      "output_preview": "May 26 07:08:37 NoBodyWill uwsm_app-daemon[1267]: received: app -- xdg-terminal-exec --dir=/home/hackb/openAi/OctoBot\nMay 26 07:08:37 NoBodyWill uwsm_app-daemon[1267]: sent: exec systemd-run --user --scope --slice=app-graphical.slice '--unit=app-Hyprland-xdg\\x2dterminal\\x2dexec-acadd777.scope' --description=xdg-terminal-exec --quiet --collect --same-dir -- xdg-terminal-exec --dir=/home/hackb/openAi/OctoBot\nMay 26 07:08:37 NoBodyWill systemd[991]: Started xdg-terminal-exec.\nMay 26 07:08:38 NoBodyWill uwsm_app-daemon[1267]: received: app -- xdg-terminal-exec --dir=/home/hackb/openAi/OctoBot\nMay 26 07:08:38 NoBodyWill uwsm_app-daemon[1267]: sent: exec systemd-run --user --scope --slice=app-graphical.slice '--unit=app-Hyprland-xdg\\x2dterminal\\x2dexec-7994d68b.scope' --description=xdg-terminal-exec --quiet --collect --same-dir -- xdg-terminal-exec --dir=/home/hackb/openAi/OctoBot\nMay 26 07:08:38 NoBodyWill systemd[991]: Started xdg-terminal-exec.\nMay 26 07:08:43 NoBodyWill pipewire-pulse[1482]: mod.protocol-pulse: setsockopt(SO_PRIORITY) failed: Bad file descriptor\nMay 26 07:08:43 NoBodyWill pipewire-pulse[1482]: mod.protocol-pulse: client 0x55cf21571d20: no peercred: Bad file descripto",
+      "timestamp": "1779759864"
+    },
+    {
+      "id": "remediate-1779759866165484478",
+      "command": "systemctl restart edge-nginx",
+      "status": "completed",
+      "exit_code": 0,
+      "output_preview": "dry-run approval gate: blocked by sandbox allowlist: `systemctl restart edge-nginx`. Allowed: docker ps, kubectl get pods, journalctl -n N --no-pager, journalctl -f -n N --no-pager, systemctl --no-pager --failed, ps aux, df -h, uptime, ssh <host> uptime",
+      "timestamp": "1779759866"
+    }
+  ],
+  "explainability": [
+    {
+      "id": "exp-0001",
+      "action": "Open incident inc-042 investigation",
+      "why": "Latency alert and ingress rollout timing overlap require triage.",
+      "evidence": [
+        "edge-nginx p95 crossed 820ms for 4m",
+        "deploy-1188 occurred inside the alert window"
+      ],
+      "confidence": 72,
+      "tools_used": [
+        "prometheus",
+        "loki"
+      ],
+      "timestamp": "1779759858"
+    },
+    {
+      "id": "exp-1779759865362637026",
+      "action": "Validate root-cause hypothesis for inc-nginx_latency",
+      "why": "The workflow collected process, container, Kubernetes, systemd, and journald evidence before recommending action.",
+      "evidence": [
+        "Allowlisted infrastructure commands were executed or reported unavailable.",
+        "Workflow state reached validation after execution events completed.",
+        "No destructive remediation ran without approval."
+      ],
+      "confidence": 78,
+      "tools_used": [
+        "docker",
+        "kubectl",
+        "systemctl",
+        "journalctl"
+      ],
+      "timestamp": "1779759865"
+    }
+  ]
+}
