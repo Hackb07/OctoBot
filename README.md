@@ -6,7 +6,7 @@ This is not a chatbot UI. The project is structured as a dense DevOps console in
 
 ## Current Status
 
-The current implementation is a working Ratatui operations console with a Tier 1 execution core: controlled real infrastructure command execution, a typed async event bus, live streaming command output, a concrete incident workflow engine, and an explainability ledger. Some telemetry panels still use simulated values until Prometheus, Loki/OpenSearch, PostgreSQL, Qdrant, and OpenRouter are connected.
+The current implementation is a working Ratatui operations console with a Tier 1 execution core: controlled real infrastructure command execution, a typed async event bus, continuous real log streaming, a concrete incident workflow engine, and an explainability ledger. The Logs view starts `journalctl -f -n 0 --no-pager` at launch and only shows real stdout/stderr from allowlisted infrastructure commands. Some metric panels still use simulated values until Prometheus, Loki/OpenSearch, PostgreSQL, Qdrant, and OpenRouter are connected.
 
 ## Engineering Roadmap and Progress
 
@@ -16,13 +16,16 @@ The Tier 1 platform foundation is implemented in the current codebase. Progress 
 
 Without these, the project weakens badly.
 
-| Capability | Progress | Current Status |
-| --- | --- | --- |
-| Real infrastructure execution | `[##########] 100%` | Implemented with an allowlisted execution layer for real read-only commands: `docker ps`, `kubectl get pods`, `journalctl -n N --no-pager`, `systemctl --no-pager --failed`, `ps aux`, `df -h`, `uptime`, and `ssh <host> uptime`. Unsupported or unsafe commands are blocked. |
-| Event-driven architecture | `[##########] 100%` | Implemented with a typed `OpsEvent` bus, Tokio `mpsc` event ingestion, Tokio `watch` state snapshots, and a reducer-owned `OpsState`. Commands, agents, workflows, research, explainability, metrics, and execution output move as events. |
-| Live streaming UI | `[##########] 100%` | Implemented. The TUI receives live state snapshots and streams logs, command output, execution status, metrics, workflow progress, agent tasks, and explainability records. |
-| Workflow engine | `[##########] 100%` | Implemented for the core incident flow: detect issue -> spawn/assign agents -> run real infrastructure evidence commands -> validate evidence -> generate report -> execute remediation through a dry-run approval gate. |
-| Explainability layer | `[##########] 100%` | Implemented with durable in-memory `ExplainabilityRecord` entries showing action, why it acted, evidence, confidence score, tools used, and timestamp. |
+- [x] Real infrastructure execution - `[##########] 100%`
+  Implemented with an allowlisted execution layer for real read-only commands: `docker ps`, `kubectl get pods`, `journalctl -n N --no-pager`, `systemctl --no-pager --failed`, `ps aux`, `df -h`, `uptime`, and `ssh <host> uptime`. Unsupported or unsafe commands are blocked.
+- [x] Event-driven architecture - `[##########] 100%`
+  Implemented with a typed `OpsEvent` bus, Tokio `mpsc` event ingestion, Tokio `watch` state snapshots, and a reducer-owned `OpsState`. Commands, agents, workflows, research, explainability, metrics, and execution output move as events.
+- [x] Live streaming UI - `[##########] 100%`
+  The TUI receives live state snapshots and continuously streams real `journalctl -f` stdout/stderr in the Logs view, plus execution status, metrics, workflow progress, agent tasks, and explainability records.
+- [x] Workflow engine - `[##########] 100%`
+  Implemented for the core incident flow: detect issue -> spawn/assign agents -> run real infrastructure evidence commands -> validate evidence -> generate report -> execute remediation through a dry-run approval gate.
+- [x] Explainability layer - `[##########] 100%`
+  Implemented with durable in-memory `ExplainabilityRecord` entries showing action, why it acted, evidence, confidence score, tools used, and timestamp.
 
 Target event model:
 
@@ -46,25 +49,31 @@ The event-driven design is required to avoid request-response spaghetti and make
 
 These make the project feel advanced and credible.
 
-| Capability | Progress | Current Status |
-| --- | --- | --- |
-| Multi-agent coordination graph | `[##--------] 20%` | Partially represented through the Agents view. A visual graph of Planner -> Research Agent / Infra Agent / Validator Agent is not implemented yet. |
-| Infrastructure time-travel analysis | `[----------] 0%` | Not implemented yet. The system does not yet correlate deployments, logs, CPU, memory, commits, and incidents over time. |
-| Autonomous recovery workflows | `[----------] 0%` | Not implemented yet. Restart service, clear temp files, rollback deployment, and rotate logs need safety controls before execution. |
-| RBAC | `[----------] 0%` | Not implemented yet. Roles such as Admin, Operator, Read-only, and Security reviewer are still required. |
-| Incident replay mode | `[#---------] 10%` | Early foundation only. Structured state and logs exist, but replay of alerts, metrics, logs, agent actions, and remediation steps is not implemented. |
+- [ ] Multi-agent coordination graph - `[##--------] 20%`
+  Partially represented through the Agents view. A visual graph of Planner -> Research Agent / Infra Agent / Validator Agent is not implemented yet.
+- [ ] Infrastructure time-travel analysis - `[----------] 0%`
+  The system does not yet correlate deployments, logs, CPU, memory, commits, and incidents over time.
+- [ ] Autonomous recovery workflows - `[----------] 0%`
+  Restart service, clear temp files, rollback deployment, and rotate logs need safety controls before execution.
+- [ ] RBAC - `[----------] 0%`
+  Roles such as Admin, Operator, Read-only, and Security reviewer are still required.
+- [ ] Incident replay mode - `[#---------] 10%`
+  Early foundation only. Structured state and logs exist, but replay of alerts, metrics, logs, agent actions, and remediation steps is not implemented.
 
 ### Tier 3 - Elite Features
 
 These are advanced differentiators.
 
-| Capability | Progress | Current Status |
-| --- | --- | --- |
-| Sandbox command execution | `[########--] 80%` | Implemented for local read-only execution with allowlists, blocked unsafe commands, streaming output, timeouts, SSH target validation, and dry-run approval gates. Still needs persisted policy management and per-role approvals. |
-| Research confidence engine | `[##--------] 20%` | Partially represented by confidence scores. Evidence reliability, contradictions, and confidence ranking are not implemented yet. |
-| Plugin system | `[----------] 0%` | Not implemented yet. Users cannot yet add tools, workflows, integrations, or agent types. |
-| Distributed agent execution | `[----------] 0%` | Not implemented yet. Agents do not yet run across local processes, remote servers, containers, or clusters. |
-| Infrastructure knowledge graph | `[----------] 0%` | Not implemented yet. Relationships between services, incidents, deployments, failures, and metrics still need to be modeled and persisted. |
+- [ ] Sandbox command execution - `[########--] 80%`
+  Implemented for local read-only execution with allowlists, blocked unsafe commands, streaming output, timeouts, SSH target validation, and dry-run approval gates. Still needs persisted policy management and per-role approvals.
+- [ ] Research confidence engine - `[##--------] 20%`
+  Partially represented by confidence scores. Evidence reliability, contradictions, and confidence ranking are not implemented yet.
+- [ ] Plugin system - `[----------] 0%`
+  Users cannot yet add tools, workflows, integrations, or agent types.
+- [ ] Distributed agent execution - `[----------] 0%`
+  Agents do not yet run across local processes, remote servers, containers, or clusters.
+- [ ] Infrastructure knowledge graph - `[----------] 0%`
+  Relationships between services, incidents, deployments, failures, and metrics still need to be modeled and persisted.
 
 ### Features Not Worth Prioritizing
 
@@ -137,7 +146,8 @@ If this one flow feels real, the project becomes memorable.
 - Agent orchestration view with role, status, task, and confidence score
 - Incident investigation table with severity, service, status, and active hypothesis
 - Research tree view for evidence-driven operational research
-- Live log stream view
+- Real log stream view backed only by stdout/stderr from allowlisted infrastructure commands
+- Continuous default real log stream from `journalctl -f -n 0 --no-pager`
 - Infrastructure health table with resource, kind, health, CPU, and memory
 - Real infrastructure execution table with command status, exit code, and output preview
 - Workflow monitor with owner, stage, and progress
@@ -197,13 +207,16 @@ GET /api/state
 q          Quit
 j / Down   Move navigation down
 k / Up     Move navigation up
+Tab        Switch to next view
+Shift-Tab  Switch to previous view
 1-9        Switch views directly
 :          Enter command mode
 Esc        Exit command mode
 Enter      Execute command
+Tab        Autocomplete command while command mode is active
 ```
 
-Example commands:
+Default autocomplete commands:
 
 ```txt
 :investigate nginx_latency
@@ -211,13 +224,16 @@ Example commands:
 :analyze-logs auth-service
 :generate-report incident_042
 :exec uptime
+:exec df -h
+:exec ps aux
 :exec docker ps
 :exec kubectl get pods
 :exec systemctl --no-pager --failed
 :exec journalctl -n 40 --no-pager
+:exec journalctl -f -n 0 --no-pager
 ```
 
-The `:exec` command is intentionally sandboxed. Only allowlisted read-only infrastructure commands are executed.
+The `:exec` command is intentionally sandboxed. Only allowlisted read-only infrastructure commands are executed. OctoBot also starts a continuous `journalctl -f -n 0 --no-pager` stream automatically for the Logs view.
 
 ## Application Views
 

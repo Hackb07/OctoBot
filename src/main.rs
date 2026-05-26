@@ -9,7 +9,7 @@ use color_eyre::eyre::{Context, Result};
 use crossterm::event::{self, Event as TerminalEvent, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
     DefaultTerminal, Frame,
-    layout::{Alignment, Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Position, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::{Block, Borders, Gauge, List, ListItem, Paragraph, Row, Table, Tabs, Wrap},
@@ -34,6 +34,20 @@ const NAV_ITEMS: [(&str, char); 9] = [
     ("Workflows", '7'),
     ("Reports", '8'),
     ("Settings", '9'),
+];
+
+const COMMAND_SUGGESTIONS: [&str; 11] = [
+    "investigate nginx_latency",
+    "spawn-agent research",
+    "analyze-logs auth-service",
+    "generate-report incident_042",
+    "exec uptime",
+    "exec df -h",
+    "exec ps aux",
+    "exec docker ps",
+    "exec kubectl get pods",
+    "exec systemctl --no-pager --failed",
+    "exec journalctl -n 40 --no-pager",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -319,12 +333,7 @@ impl OpsState {
                 timestamp: now_ts(),
             }],
             events: Vec::new(),
-            logs: vec![
-                "INFO workflow wf-2041 scheduled prometheus range query".into(),
-                "WARN edge-nginx p95 latency crossed 820ms for 4m".into(),
-                "INFO agent triage-01 linked rollout deploy-1188 to latency spike".into(),
-                "INFO qdrant indexed 128 runbook fragments for retrieval".into(),
-            ],
+            logs: Vec::new(),
             reports: vec![
                 "inc-042: evidence graph 63% complete, 7 validated claims".into(),
                 "daily-sre: availability summary waiting on OpenSearch export".into(),
@@ -357,22 +366,9 @@ impl OpsState {
             .sum::<u16>()
             .checked_div(self.infra.len() as u16)
             .unwrap_or(100) as u8;
-
-        let event = match self.uptime_secs % 5 {
-            0 => "INFO report engine generated explainability checkpoint",
-            1 => "INFO websocket broadcast delivered orchestration snapshot",
-            2 => "DEBUG reqwest provider probe completed for OpenRouter route",
-            3 => "INFO postgres incident timeline transaction committed",
-            _ => "WARN loki stream detected elevated 5xx sample density",
-        };
-        self.logs.push(event.into());
-        if self.logs.len() > 80 {
-            self.logs.remove(0);
-        }
     }
 
     fn apply_event(&mut self, event: OpsEvent) {
-        self.logs.push(format!("EVENT {}", event.summary()));
         match &event {
             OpsEvent::IncidentDetected {
                 incident_id,
@@ -544,63 +540,6 @@ impl OpsState {
         if self.explainability.len() > 80 {
             let drop_count = self.explainability.len() - 80;
             self.explainability.drain(0..drop_count);
-        }
-    }
-}
-
-impl OpsEvent {
-    fn summary(&self) -> String {
-        match self {
-            OpsEvent::IncidentDetected {
-                incident_id,
-                service,
-                severity,
-                ..
-            } => {
-                format!("incident_detected id={incident_id} service={service} severity={severity}")
-            }
-            OpsEvent::AgentSpawned { name, role, .. } => {
-                format!("agent_spawned name={name} role={role:?}")
-            }
-            OpsEvent::TaskAssigned { agent, task, .. } => {
-                format!("task_assigned agent={agent} task={task}")
-            }
-            OpsEvent::CommandRequested {
-                id,
-                command,
-                dry_run,
-                ..
-            } => format!("command_requested id={id} dry_run={dry_run} command={command}"),
-            OpsEvent::CommandOutput {
-                id, stream, line, ..
-            } => format!("command_output id={id} stream={stream} line={line}"),
-            OpsEvent::CommandExecuted {
-                id,
-                success,
-                exit_code,
-                ..
-            } => format!("command_executed id={id} success={success} exit={exit_code:?}"),
-            OpsEvent::ResearchCompleted {
-                topic, confidence, ..
-            } => format!("research_completed topic={topic} confidence={confidence}"),
-            OpsEvent::WorkflowAdvanced {
-                id,
-                stage,
-                progress,
-                ..
-            } => format!("workflow_advanced id={id} progress={progress} stage={stage}"),
-            OpsEvent::ExplainabilityRecorded { record } => {
-                format!(
-                    "explainability_recorded id={} confidence={}",
-                    record.id, record.confidence
-                )
-            }
-            OpsEvent::UserCommandEntered { command, .. } => {
-                format!("user_command command=:{command}")
-            }
-            OpsEvent::MetricsSampled { cpu, memory, .. } => {
-                format!("metrics_sampled cpu={cpu} memory={memory}")
-            }
         }
     }
 }
@@ -791,6 +730,7 @@ impl App {
     fn draw_agents(&self, frame: &mut Frame, area: Rect) {
         let rows = self.state.agents.iter().map(|agent| {
             Row::new(vec![
+                octopus_marker(&agent.status).into(),
                 agent.name.clone(),
                 format!("{:?}", agent.role),
                 format!("{:?}", agent.status),
@@ -802,6 +742,7 @@ impl App {
             Table::new(
                 rows,
                 [
+                    Constraint::Length(5),
                     Constraint::Length(14),
                     Constraint::Length(10),
                     Constraint::Length(10),
@@ -810,7 +751,7 @@ impl App {
                 ],
             )
             .header(
-                Row::new(["agent", "role", "status", "score", "current task"])
+                Row::new(["bot", "agent", "role", "status", "score", "current task"])
                     .style(Style::default().fg(Color::Cyan)),
             )
             .block(Block::bordered().title(" Agent Orchestration ")),
@@ -882,17 +823,21 @@ impl App {
     }
 
     fn draw_logs(&self, frame: &mut Frame, area: Rect) {
-        let visible = self
-            .state
-            .logs
-            .iter()
-            .rev()
-            .take(area.height.saturating_sub(2) as usize);
-        let items = visible
-            .map(|line| ListItem::new(line.as_str()))
-            .collect::<Vec<_>>();
+        let items = if self.state.logs.is_empty() {
+            vec![ListItem::new(
+                "Waiting for real logs from journalctl -f -n 0 --no-pager. Run :exec journalctl -n 40 --no-pager for a snapshot.",
+            )]
+        } else {
+            self.state
+                .logs
+                .iter()
+                .rev()
+                .take(area.height.saturating_sub(2) as usize)
+                .map(|line| ListItem::new(line.as_str()))
+                .collect::<Vec<_>>()
+        };
         frame.render_widget(
-            List::new(items).block(Block::bordered().title(" Live Logs ")),
+            List::new(items).block(Block::bordered().title(" Real Logs ")),
             area,
         );
     }
@@ -1057,24 +1002,38 @@ impl App {
         let text = if self.command_mode {
             format!("{prompt}{}", self.command)
         } else {
-            "press : | exec uptime | investigate nginx_latency | analyze-logs auth-service | j/k | 1-9 | q".into()
+            "press : | Tab switch views | exec uptime | investigate nginx_latency | j/k | 1-9 | q"
+                .into()
         };
-        let recent = self
-            .activity
-            .iter()
-            .rev()
-            .take(2)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join("  ");
+        let hint = if self.command_mode {
+            command_completion(&self.command)
+                .map(|completion| format!("Tab complete: :{completion}"))
+                .unwrap_or_else(|| {
+                    "commands: investigate | spawn-agent | analyze-logs | generate-report | exec"
+                        .into()
+                })
+        } else {
+            self.activity
+                .iter()
+                .rev()
+                .take(2)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("  ")
+        };
         frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(text),
-                Line::from(recent.fg(Color::DarkGray)),
-            ])
-            .block(Block::bordered().title(" Command Console ")),
+            Paragraph::new(vec![Line::from(text), Line::from(hint.fg(Color::DarkGray))])
+                .block(Block::bordered().title(" Command Console ")),
             area,
         );
+        if self.command_mode {
+            let cursor_x = area
+                .x
+                .saturating_add(2)
+                .saturating_add(self.command.chars().count() as u16)
+                .min(area.right().saturating_sub(2));
+            frame.set_cursor_position(Position::new(cursor_x, area.y.saturating_add(1)));
+        }
     }
 
     fn handle_events(&mut self) -> io::Result<()> {
@@ -1095,6 +1054,7 @@ impl App {
                     self.command.clear();
                 }
                 KeyCode::Enter => self.execute_command(),
+                KeyCode::Tab => self.autocomplete_command(),
                 KeyCode::Backspace => {
                     self.command.pop();
                 }
@@ -1107,6 +1067,8 @@ impl App {
         match key.code {
             KeyCode::Char('q') => self.exit = true,
             KeyCode::Char(':') => self.command_mode = true,
+            KeyCode::Tab => self.next_nav(),
+            KeyCode::BackTab => self.prev_nav(),
             KeyCode::Char('j') | KeyCode::Down => self.next_nav(),
             KeyCode::Char('k') | KeyCode::Up => self.prev_nav(),
             KeyCode::Char(c @ '1'..='9') => {
@@ -1125,6 +1087,12 @@ impl App {
             .selected_nav
             .checked_sub(1)
             .unwrap_or(NAV_ITEMS.len() - 1);
+    }
+
+    fn autocomplete_command(&mut self) {
+        if let Some(completion) = command_completion(&self.command) {
+            self.command = completion.into();
+        }
     }
 
     fn execute_command(&mut self) {
@@ -1479,6 +1447,82 @@ async fn run_infrastructure_command(
     });
 }
 
+async fn run_live_log_stream(event_tx: mpsc::UnboundedSender<OpsEvent>) {
+    let id = "live-journalctl".to_string();
+    let command = "journalctl -f -n 0 --no-pager".to_string();
+    let _ = event_tx.send(OpsEvent::CommandRequested {
+        id: id.clone(),
+        command: command.clone(),
+        reason: "Continuous real system log stream for Logs tab".into(),
+        dry_run: false,
+        timestamp: now_ts(),
+    });
+
+    let mut child = match Command::new("journalctl")
+        .args(["-f", "-n", "0", "--no-pager"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            let _ = event_tx.send(OpsEvent::CommandExecuted {
+                id,
+                command,
+                success: false,
+                exit_code: None,
+                stdout: String::new(),
+                stderr: format!("failed to start continuous journal stream: {error}"),
+                timestamp: now_ts(),
+            });
+            return;
+        }
+    };
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let stdout_task = tokio::spawn(stream_command_output(
+        id.clone(),
+        "stdout",
+        stdout,
+        event_tx.clone(),
+    ));
+    let stderr_task = tokio::spawn(stream_command_output(
+        id.clone(),
+        "stderr",
+        stderr,
+        event_tx.clone(),
+    ));
+
+    let status = match child.wait().await {
+        Ok(status) => status,
+        Err(error) => {
+            let _ = event_tx.send(OpsEvent::CommandExecuted {
+                id,
+                command,
+                success: false,
+                exit_code: None,
+                stdout: String::new(),
+                stderr: format!("continuous journal stream failed: {error}"),
+                timestamp: now_ts(),
+            });
+            return;
+        }
+    };
+
+    let stdout = stdout_task.await.unwrap_or_default();
+    let stderr = stderr_task.await.unwrap_or_default();
+    let _ = event_tx.send(OpsEvent::CommandExecuted {
+        id,
+        command,
+        success: status.success(),
+        exit_code: status.code(),
+        stdout,
+        stderr,
+        timestamp: now_ts(),
+    });
+}
+
 async fn stream_command_output(
     id: String,
     stream: &'static str,
@@ -1526,6 +1570,17 @@ fn parse_allowlisted_command(command: &str) -> std::result::Result<ParsedCommand
                 args: vec!["-n".into(), (*count).into(), "--no-pager".into()],
             })
         }
+        ["journalctl", "-f", "-n", count, "--no-pager"] if count.parse::<u16>().is_ok() => {
+            Ok(ParsedCommand {
+                program: "journalctl",
+                args: vec![
+                    "-f".into(),
+                    "-n".into(),
+                    (*count).into(),
+                    "--no-pager".into(),
+                ],
+            })
+        }
         ["systemctl", "--no-pager", "--failed"] => Ok(ParsedCommand {
             program: "systemctl",
             args: vec!["--no-pager".into(), "--failed".into()],
@@ -1547,7 +1602,7 @@ fn parse_allowlisted_command(command: &str) -> std::result::Result<ParsedCommand
             args: vec![(*host).into(), "uptime".into()],
         }),
         _ => Err(format!(
-            "blocked by sandbox allowlist: `{command}`. Allowed: docker ps, kubectl get pods, journalctl -n N --no-pager, systemctl --no-pager --failed, ps aux, df -h, uptime, ssh <host> uptime"
+            "blocked by sandbox allowlist: `{command}`. Allowed: docker ps, kubectl get pods, journalctl -n N --no-pager, journalctl -f -n N --no-pager, systemctl --no-pager --failed, ps aux, df -h, uptime, ssh <host> uptime"
         )),
     }
 }
@@ -1558,6 +1613,26 @@ fn safe_ssh_target(host: &str) -> bool {
         && host
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '@'))
+}
+
+fn command_completion(input: &str) -> Option<&'static str> {
+    let normalized = input.trim_start();
+    if normalized.is_empty() {
+        return COMMAND_SUGGESTIONS.first().copied();
+    }
+    COMMAND_SUGGESTIONS
+        .iter()
+        .copied()
+        .find(|command| command.starts_with(normalized))
+}
+
+fn octopus_marker(status: &AgentStatus) -> &'static str {
+    match status {
+        AgentStatus::Running => "🐙",
+        AgentStatus::Waiting => "o_o",
+        AgentStatus::Escalated => "!!!",
+        AgentStatus::Idle => "--",
+    }
 }
 
 async fn serve_api(rx: watch::Receiver<OpsState>) -> Result<()> {
@@ -1635,6 +1710,7 @@ mod tests {
             "docker ps",
             "kubectl get pods",
             "journalctl -n 20 --no-pager",
+            "journalctl -f -n 0 --no-pager",
             "systemctl --no-pager --failed",
             "ps aux",
             "df -h",
@@ -1718,6 +1794,20 @@ mod tests {
         assert_eq!(execution.status, "completed");
         assert_eq!(execution.exit_code, Some(0));
     }
+
+    #[test]
+    fn command_completion_uses_default_commands() {
+        assert_eq!(
+            command_completion("exec j"),
+            Some("exec journalctl -n 40 --no-pager")
+        );
+        assert_eq!(
+            command_completion("invest"),
+            Some("investigate nginx_latency")
+        );
+        assert_eq!(command_completion(""), Some("investigate nginx_latency"));
+        assert_eq!(command_completion("unknown"), None);
+    }
 }
 
 #[tokio::main]
@@ -1728,6 +1818,7 @@ async fn main() -> Result<()> {
     let (tx, rx) = watch::channel(OpsState::seed());
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     tokio::spawn(ops_runtime(tx, event_rx, event_tx.clone()));
+    tokio::spawn(run_live_log_stream(event_tx.clone()));
     tokio::spawn({
         let rx = rx.clone();
         async move {
