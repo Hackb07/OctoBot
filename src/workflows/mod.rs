@@ -179,15 +179,14 @@ impl DagWorkflowRuntime {
                     .map(|s| &s.status)
                     .unwrap_or(&NodeStatus::Pending);
                 matches!(state, NodeStatus::Pending)
-                    && node
-                        .depends_on
-                        .iter()
-                        .all(|dependency| {
-                            self.node_states
-                                .get(dependency)
-                                .map(|s| matches!(s.status, NodeStatus::Succeeded | NodeStatus::Skipped))
-                                .unwrap_or(false)
-                        })
+                    && node.depends_on.iter().all(|dependency| {
+                        self.node_states
+                            .get(dependency)
+                            .map(|s| {
+                                matches!(s.status, NodeStatus::Succeeded | NodeStatus::Skipped)
+                            })
+                            .unwrap_or(false)
+                    })
             })
             .collect()
     }
@@ -202,9 +201,12 @@ impl DagWorkflowRuntime {
     }
 
     pub(crate) fn is_complete(&self) -> bool {
-        self.node_states
-            .values()
-            .all(|s| matches!(s.status, NodeStatus::Succeeded | NodeStatus::Failed | NodeStatus::Skipped))
+        self.node_states.values().all(|s| {
+            matches!(
+                s.status,
+                NodeStatus::Succeeded | NodeStatus::Failed | NodeStatus::Skipped
+            )
+        })
     }
 
     pub(crate) fn mark_running(&mut self, node_id: &str) -> Result<()> {
@@ -318,20 +320,33 @@ impl DagWorkflowRuntime {
     }
 
     /// Evaluate a condition expression against a simple key=value context.
-    pub(crate) fn evaluate_condition(&self, condition: &str, context: &HashMap<String, String>) -> bool {
+    pub(crate) fn evaluate_condition(
+        &self,
+        condition: &str,
+        context: &HashMap<String, String>,
+    ) -> bool {
         // Supports: "key=value", "key!=value", "key>number", "key<number"
         if let Some((key, expected)) = condition.split_once('=') {
             if key.ends_with('!') {
                 let actual_key = key.trim_end_matches('!');
-                context.get(actual_key).map(|v| v != expected).unwrap_or(false)
+                context
+                    .get(actual_key)
+                    .map(|v| v != expected)
+                    .unwrap_or(false)
             } else if key.ends_with('>') {
                 let actual_key = key.trim_end_matches('>');
-                let actual: f64 = context.get(actual_key).and_then(|v| v.parse().ok()).unwrap_or(0.0);
+                let actual: f64 = context
+                    .get(actual_key)
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0.0);
                 let expected_val: f64 = expected.parse().unwrap_or(0.0);
                 actual > expected_val
             } else if key.ends_with('<') {
                 let actual_key = key.trim_end_matches('<');
-                let actual: f64 = context.get(actual_key).and_then(|v| v.parse().ok()).unwrap_or(0.0);
+                let actual: f64 = context
+                    .get(actual_key)
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0.0);
                 let expected_val: f64 = expected.parse().unwrap_or(0.0);
                 actual < expected_val
             } else {

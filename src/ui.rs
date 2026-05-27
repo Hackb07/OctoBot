@@ -17,7 +17,8 @@ use crate::{
     constants::{COMMAND_SUGGESTIONS, NAV_ITEMS},
     models::{
         AgentRole, AgentRuntime, AgentRuntimeKind, AgentStatus, KnowledgeEdge, OpsEvent, OpsState,
-        PluginDescriptor, PluginKind, PluginStatus, RecoveryAction, RecoveryStatus, RuntimeStatus, UserRole,
+        PluginDescriptor, PluginKind, PluginStatus, RecoveryAction, RecoveryStatus, RuntimeStatus,
+        UserRole,
     },
     reports::write_report_json,
     utils::{next_agent_name, next_id, now_ts},
@@ -115,7 +116,10 @@ impl App {
             "  uptime ".dark_gray(),
             uptime.into(),
         ]);
-        frame.render_widget(Paragraph::new(info_line.clone()).block(Block::bordered()), area);
+        frame.render_widget(
+            Paragraph::new(info_line.clone()).block(Block::bordered()),
+            area,
+        );
     }
 
     fn draw_nav(&self, frame: &mut Frame, area: Rect) {
@@ -180,16 +184,27 @@ impl App {
 
         self.draw_metric_card(frame, top[0], "Health", self.state.health);
         self.draw_metric_card(
-            frame, top[1], "Agents",
+            frame,
+            top[1],
+            "Agents",
             (self.state.active_agents as u8).saturating_mul(20).min(100),
         );
         self.draw_metric_card(
-            frame, top[2], "Events",
+            frame,
+            top[2],
+            "Events",
             (self.state.events.len() as u8).min(100),
         );
         self.draw_metric_card(
-            frame, top[3], "Pending",
-            (self.state.recovery_actions.iter().filter(|a| a.status == RecoveryStatus::AwaitingApproval).count() as u8)
+            frame,
+            top[3],
+            "Pending",
+            (self
+                .state
+                .recovery_actions
+                .iter()
+                .filter(|a| a.status == RecoveryStatus::AwaitingApproval)
+                .count() as u8)
                 .saturating_mul(33)
                 .min(100),
         );
@@ -253,8 +268,7 @@ impl App {
     fn draw_event_preview(&self, frame: &mut Frame, area: Rect) {
         if self.state.events.is_empty() {
             frame.render_widget(
-                Paragraph::new(" No events")
-                    .block(Block::bordered().title(" Events ")),
+                Paragraph::new(" No events").block(Block::bordered().title(" Events ")),
                 area,
             );
             return;
@@ -268,20 +282,18 @@ impl App {
             .map(|event| {
                 let tag = event_type_tag(event);
                 let ts = event_timestamp(event);
-                let short = if ts.len() >= 8 { &ts[ts.len().saturating_sub(8)..] } else { ts };
+                let short = if ts.len() >= 8 {
+                    &ts[ts.len().saturating_sub(8)..]
+                } else {
+                    ts
+                };
                 Row::new(vec![short, tag])
             })
             .collect();
         frame.render_widget(
-            Table::new(
-                rows,
-                [Constraint::Length(10), Constraint::Min(24)],
-            )
-            .header(
-                Row::new(vec!["time", "event"])
-                    .style(Style::default().fg(Color::Cyan)),
-            )
-            .block(Block::bordered().title(" Events ")),
+            Table::new(rows, [Constraint::Length(10), Constraint::Min(24)])
+                .header(Row::new(vec!["time", "event"]).style(Style::default().fg(Color::Cyan)))
+                .block(Block::bordered().title(" Events ")),
             area,
         );
     }
@@ -300,15 +312,20 @@ impl App {
     fn draw_agents(&self, frame: &mut Frame, area: Rect) {
         let chunks =
             Layout::vertical([Constraint::Percentage(58), Constraint::Percentage(42)]).split(area);
-        let rows: Vec<Row> = self.state.agents.iter().map(|agent| {
-            Row::new(vec![
-                octopus_marker(&agent.status).into(),
-                agent.name.clone(),
-                format!("{:?}", agent.role),
-                format!("{:?}", agent.status),
-                agent.task.clone(),
-            ])
-        }).collect();
+        let rows: Vec<Row> = self
+            .state
+            .agents
+            .iter()
+            .map(|agent| {
+                Row::new(vec![
+                    octopus_marker(&agent.status).into(),
+                    agent.name.clone(),
+                    format!("{:?}", agent.role),
+                    format!("{:?}", agent.status),
+                    agent.task.clone(),
+                ])
+            })
+            .collect();
         let visible_rows: Vec<Row> = rows
             .into_iter()
             .rev()
@@ -455,10 +472,32 @@ impl App {
                 "confidence: {}%  reliability: {}%  contradictions: {}",
                 profile.ranking, profile.evidence_reliability, profile.contradiction_count
             )),
-            Line::from(format!("  ├─ infrastructure: {}", if infra_summary.is_empty() { "none" } else { &infra_summary })),
-            Line::from(format!("  ├─ incidents: {}", if incident_summary.is_empty() { "none" } else { &incident_summary })),
-            Line::from(format!("  ├─ workflows: {}", if workflow_summary.is_empty() { "none" } else { &workflow_summary })),
-            Line::from(format!("  └─ knowledge graph: {} nodes, {} edges",
+            Line::from(format!(
+                "  ├─ infrastructure: {}",
+                if infra_summary.is_empty() {
+                    "none"
+                } else {
+                    &infra_summary
+                }
+            )),
+            Line::from(format!(
+                "  ├─ incidents: {}",
+                if incident_summary.is_empty() {
+                    "none"
+                } else {
+                    &incident_summary
+                }
+            )),
+            Line::from(format!(
+                "  ├─ workflows: {}",
+                if workflow_summary.is_empty() {
+                    "none"
+                } else {
+                    &workflow_summary
+                }
+            )),
+            Line::from(format!(
+                "  └─ knowledge graph: {} nodes, {} edges",
                 self.state.knowledge_nodes.len(),
                 self.state.knowledge_edges.len()
             )),
@@ -514,7 +553,7 @@ impl App {
     fn draw_logs(&self, frame: &mut Frame, area: Rect) {
         let items = if self.state.logs.is_empty() {
             vec![ListItem::new(
-                "Waiting for real logs from journalctl -f -n 0 --no-pager. Run /exec journalctl -n 40 --no-pager for a snapshot.",
+                "Streaming live logs from journalctl -f -n 20 --no-pager...",
             )]
         } else {
             self.state
@@ -794,6 +833,7 @@ impl App {
             Line::from(" ├─────────────────────────────────────────────────────┤").fg(Color::Cyan),
             Line::from(" │                    Commands                         │").fg(Color::Cyan),
             Line::from(" ├─────────────────────────────────────────────────────┤").fg(Color::Cyan),
+            Line::from(" │ /multi-agent <task>     Multi-agent investigation    │").into(),
             Line::from(" │ /investigate <service>  Create incident             │").into(),
             Line::from(" │ /spawn-agent <role>     Launch AI agent             │").into(),
             Line::from(" │ /exec <command>         Run infra command           │").into(),
@@ -803,7 +843,8 @@ impl App {
             Line::from(" │ /role <admin|operator>  Change user role            │").into(),
             Line::from(" │ /plugin add|enable|disable <name>  Plugin mgmt      │").into(),
             Line::from(" │ /research confidence    View research profile       │").into(),
-            Line::from(" │ /login <provider> <key> Auth AI provider            │").into(),
+            Line::from(" │ /login ollama <url>     Point to local Ollama       │").into(),
+            Line::from(" │ /tasks-report           Report last 50 tasks        │").into(),
             Line::from(" └─────────────────────────────────────────────────────┘").fg(Color::Cyan),
         ];
         frame.render_widget(
@@ -815,15 +856,9 @@ impl App {
     }
 
     fn draw_settings(&self, frame: &mut Frame, area: Rect) {
-        let tabs = Tabs::new([
-            "OpenRouter",
-            "PostgreSQL",
-            "Qdrant",
-            "Prometheus",
-            "Loki/OpenSearch",
-        ])
-        .block(Block::new().borders(Borders::BOTTOM))
-        .highlight_style(Style::default().fg(Color::Cyan));
+        let tabs = Tabs::new(["Ollama", "Models", "Tokens", "Reasoning", "Notifications"])
+            .block(Block::new().borders(Borders::BOTTOM))
+            .highlight_style(Style::default().fg(Color::Cyan));
         let chunks = Layout::vertical([
             Constraint::Length(3),
             Constraint::Percentage(54),
@@ -862,17 +897,27 @@ impl App {
 
         frame.render_widget(
             Paragraph::new(vec![
-                Line::from(
-                    "Provider defaults: OpenRouter LLM route with user-configurable adapters",
-                ),
-                Line::from(
-                    "Persistence: PostgreSQL incident timelines and workflow execution state",
-                ),
-                Line::from("Retrieval: Qdrant operational memory and runbook embeddings"),
-                Line::from("Telemetry: Prometheus metrics plus Loki/OpenSearch logs"),
-                Line::from(
-                    "Realtime: Tokio channels, watch snapshots, and Axum API/WebSocket boundary",
-                ),
+                Line::from(format!(
+                    "Ollama endpoint: {}",
+                    std::env::var("OCTOBOT_OLLAMA_URL")
+                        .unwrap_or_else(|_| "http://localhost:11434".into())
+                )),
+                Line::from(format!(
+                    "Installed models: {}",
+                    self.state.model_health.len()
+                )),
+                Line::from(format!(
+                    "Token usage: {} requests, {} prompt / {} completion / {} total",
+                    self.state.token_usage.requests,
+                    self.state.token_usage.prompt_tokens,
+                    self.state.token_usage.completion_tokens,
+                    self.state.token_usage.total_tokens
+                )),
+                Line::from(format!(
+                    "Reasoning stream entries: {}",
+                    self.state.reasoning_stream.len()
+                )),
+                Line::from(format!("Notifications: {}", self.state.notifications.len())),
                 Line::from(format!(
                     "Sandbox policy: {} | roles {:?} | review targets {}",
                     self.state.sandbox_policy.mode,
@@ -890,11 +935,11 @@ impl App {
                     self.state.knowledge_nodes.len(),
                     self.state.knowledge_edges.len()
                 )),
-                Line::from("Tier 1: event bus, workflow engine, command sandbox, streaming execution, explainability ledger"),
                 Line::from(format!(
-                    "Tier 2: role {:?}, replay {}/{}, recovery approvals require Admin or Operator",
-                    self.state.current_role, self.state.replay.position, self.state.replay.total
+                    "Replay cursor: {}/{}",
+                    self.state.replay.position, self.state.replay.total
                 )),
+                Line::from(format!("Current role: {:?}", self.state.current_role)),
             ])
             .block(Block::bordered().title(" Integration Settings "))
             .wrap(Wrap { trim: true }),
@@ -938,14 +983,13 @@ impl App {
         let text = if self.command_mode {
             format!("{prompt}{}", self.command)
         } else {
-            "press / | h/? help | Tab switch views | exec uptime | j/k | 1-9 | q"
-                .into()
+            "press / | h/? help | Tab switch views | exec uptime | j/k | 1-9 | q".into()
         };
         let hint = if self.command_mode {
             command_completion(&self.command)
                 .map(|completion| format!("Tab complete: /{completion}"))
                 .unwrap_or_else(|| {
-                    "commands: investigate | spawn-agent | analyze-logs | recover | approve | role | replay | exec | research confidence | plugin add|enable|disable | runtime set | graph link | sandbox policy".into()
+                    "commands: multi-agent | investigate | spawn-agent | tasks-report | analyze-logs | recover | approve | role | replay | exec | research confidence | plugin add|enable|disable | runtime set | graph link | sandbox policy".into()
                 })
         } else {
             self.activity
@@ -1080,7 +1124,13 @@ impl App {
                 task: task.clone(),
                 timestamp: now_ts(),
             });
-            self.activity.push(format!("Multi-agent task '{}' delegated to planner {planner_id}", &task[..task.len().min(60)]).into());
+            self.activity.push(
+                format!(
+                    "Multi-agent task '{}' delegated to planner {planner_id}",
+                    &task[..task.len().min(60)]
+                )
+                .into(),
+            );
         } else if command.starts_with("spawn-agent") {
             self.selected_nav = 1;
             let role = command
@@ -1114,7 +1164,8 @@ impl App {
                     });
                 }
                 _ => {
-                    self.activity.push("Usage: /assign <agent_id> <task description>".into());
+                    self.activity
+                        .push("Usage: /assign <agent_id> <task description>".into());
                 }
             }
         } else if command.starts_with("analyze-logs") {
@@ -1141,6 +1192,108 @@ impl App {
                 topic: command.clone(),
                 conclusion,
                 confidence: 82,
+                timestamp,
+            });
+        } else if command == "tasks-report" {
+            self.selected_nav = 7;
+            let timestamp = now_ts();
+            let mut lines: Vec<String> = Vec::new();
+            lines.push("=== Last 50 Task Events ===".into());
+            lines.push(String::new());
+            let mut task_events: Vec<String> = Vec::new();
+            for event in self.state.events.iter().rev() {
+                match event {
+                    OpsEvent::TaskAssigned {
+                        agent,
+                        task,
+                        timestamp,
+                    } => {
+                        task_events.push(format!(
+                            "  [{ts}] ASSIGN  {ag:<12} → {t}",
+                            ts = &timestamp[timestamp.len().saturating_sub(8)..],
+                            ag = agent,
+                            t = task
+                        ));
+                    }
+                    OpsEvent::AgentLifecycleChanged {
+                        agent,
+                        status,
+                        task,
+                        timestamp,
+                    } => {
+                        task_events.push(format!(
+                            "  [{ts}] STATUS  {ag:<12} {st:10?} {t}",
+                            ts = &timestamp[timestamp.len().saturating_sub(8)..],
+                            ag = agent,
+                            st = status,
+                            t = task
+                        ));
+                    }
+                    OpsEvent::PlanCreated {
+                        planner,
+                        task,
+                        sub_tasks,
+                        timestamp,
+                    } => {
+                        task_events.push(format!(
+                            "  [{ts}] PLAN    {pl:<12} → {t} ({n} sub-tasks)",
+                            ts = &timestamp[timestamp.len().saturating_sub(8)..],
+                            pl = planner,
+                            t = task,
+                            n = sub_tasks.len()
+                        ));
+                    }
+                    OpsEvent::SubTaskCompleted {
+                        planner,
+                        executor,
+                        sub_task,
+                        ..
+                    } => {
+                        task_events.push(format!(
+                            "  [       ] COMPLETE {ex:<12} → {pl} done: {t}",
+                            ex = executor,
+                            pl = planner,
+                            t = sub_task
+                        ));
+                    }
+                    OpsEvent::AgentSpawned {
+                        name,
+                        role,
+                        timestamp,
+                    } => {
+                        task_events.push(format!(
+                            "  [{ts}] SPAWN   {nm:<12} role={rl:?}",
+                            ts = &timestamp[timestamp.len().saturating_sub(8)..],
+                            nm = name,
+                            rl = role
+                        ));
+                    }
+                    OpsEvent::AgentMemoryStored {
+                        agent, key, value, ..
+                    } => {
+                        task_events.push(format!(
+                            "  [       ] MEM     {ag:<12} [{k}] {v}",
+                            ag = agent,
+                            k = key,
+                            v = value
+                        ));
+                    }
+                    _ => continue,
+                }
+                if task_events.len() >= 50 {
+                    break;
+                }
+            }
+            if task_events.is_empty() {
+                lines.push("  No task events recorded yet.".into());
+            } else {
+                lines.extend(task_events.into_iter().rev());
+            }
+            let conclusion = lines.join("\n");
+            let _ = self.event_tx.send(OpsEvent::ResearchCompleted {
+                topic: "tasks-report".into(),
+                conclusion,
+                confidence: 95,
                 timestamp,
             });
         } else if command == "research confidence" {
@@ -1244,37 +1397,27 @@ impl App {
             let (kind, key_or_url) = match parts.as_slice() {
                 [kind, val] => (*kind, *val),
                 _ => {
-                    self.activity.push("Usage: /login openai <api_key> | /login ollama <url> | /login openrouter <api_key>".into());
+                    self.activity.push("Usage: /login ollama <url>".into());
                     self.command.clear();
                     self.command_mode = false;
                     return;
                 }
             };
-            let (endpoint, model, api_key) = match kind {
-                "ollama" => (
-                    format!("{}/api/chat", key_or_url.trim_end_matches('/')),
-                    std::env::var("OCTOBOT_OLLAMA_MODEL").unwrap_or_else(|_| "llama3.1".into()),
-                    None,
-                ),
-                "openrouter" => (
-                    "https://openrouter.ai/api/v1/chat/completions".into(),
-                    std::env::var("OCTOBOT_OPENROUTER_MODEL").unwrap_or_else(|_| "openrouter/free".into()),
-                    Some(key_or_url.to_string()),
-                ),
-                _ => (
-                    std::env::var("OCTOBOT_OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1/chat/completions".into()),
-                    std::env::var("OCTOBOT_OPENAI_MODEL").unwrap_or_else(|_| "gpt-4.1-mini".into()),
-                    Some(key_or_url.to_string()),
-                ),
-            };
-            let _ = self.event_tx.send(OpsEvent::AiProviderLogin {
-                kind: kind.into(),
-                endpoint,
-                model,
-                api_key,
-                timestamp: now_ts(),
-            });
-            self.activity.push(format!("/login {} (configured)", kind));
+            if kind != "ollama" {
+                self.activity
+                    .push("Only Ollama is supported. Use /login ollama <url>.".into());
+            } else {
+                let endpoint = key_or_url.trim_end_matches('/').to_string();
+                let _ = self.event_tx.send(OpsEvent::AiProviderLogin {
+                    kind: kind.into(),
+                    endpoint: endpoint.clone(),
+                    model: std::env::var("OCTOBOT_OLLAMA_MODEL")
+                        .unwrap_or_else(|_| "llama3.1:8b".into()),
+                    api_key: None,
+                    timestamp: now_ts(),
+                });
+                self.activity.push(format!("/login {} (configured)", kind));
+            }
         } else if let Some(raw) = command.strip_prefix("exec ") {
             self.selected_nav = 4;
             let _ = self.event_tx.send(OpsEvent::CommandRequested {
@@ -1414,6 +1557,7 @@ fn octopus_marker(status: &AgentStatus) -> &'static str {
     match status {
         AgentStatus::Running => "[>]",
         AgentStatus::Waiting => "[~]",
+        AgentStatus::Completed => "[OK]",
         AgentStatus::Escalated => "[!]",
         AgentStatus::Failed => "[X]",
         AgentStatus::Idle => "[-]",

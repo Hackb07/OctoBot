@@ -626,7 +626,8 @@ where
             }
         }
     }
-    Err(last_error.unwrap_or_else(|| eyre!("Qdrant operation failed after {max_attempts} attempts")))
+    Err(last_error
+        .unwrap_or_else(|| eyre!("Qdrant operation failed after {max_attempts} attempts")))
 }
 
 pub(crate) fn event_type(event: &OpsEvent) -> &'static str {
@@ -638,6 +639,10 @@ pub(crate) fn event_type(event: &OpsEvent) -> &'static str {
         OpsEvent::AiProviderRegistered { .. } => "AiProviderRegistered",
         OpsEvent::ToolCallRequested { .. } => "ToolCallRequested",
         OpsEvent::ToolCallCompleted { .. } => "ToolCallCompleted",
+        OpsEvent::ReasoningChunkRecorded { .. } => "ReasoningChunkRecorded",
+        OpsEvent::TokenUsageRecorded { .. } => "TokenUsageRecorded",
+        OpsEvent::ModelHealthUpdated { .. } => "ModelHealthUpdated",
+        OpsEvent::NotificationRaised { .. } => "NotificationRaised",
         OpsEvent::TaskAssigned { .. } => "TaskAssigned",
         OpsEvent::CommandRequested { .. } => "CommandRequested",
         OpsEvent::CommandOutput { .. } => "CommandOutput",

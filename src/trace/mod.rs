@@ -131,7 +131,12 @@ impl TraceEngine {
         self.active_spans
             .values()
             .filter(|s| s.status == SpanStatus::Running)
-            .map(|s| format!("[{}] {} → {} (started {})", s.span_id, s.operation, s.target, s.start_time))
+            .map(|s| {
+                format!(
+                    "[{}] {} → {} (started {})",
+                    s.span_id, s.operation, s.target, s.start_time
+                )
+            })
             .collect()
     }
 }
@@ -216,7 +221,9 @@ impl ReplayManager {
                         "Replay step {}/{}: {:?}",
                         position + 1,
                         total,
-                        filtered.get(position).map(|(_, e)| crate::persistence::event_type(e))
+                        filtered
+                            .get(position)
+                            .map(|(_, e)| crate::persistence::event_type(e))
                     ),
                     evidence: vec![
                         format!("position={}", position + 1),
@@ -265,7 +272,9 @@ impl ReplayManager {
 
         // Collect explainability records mentioning this incident
         for record in &state.explainability {
-            if record.action.contains(incident_id) || record.evidence.iter().any(|e| e.contains(incident_id)) {
+            if record.action.contains(incident_id)
+                || record.evidence.iter().any(|e| e.contains(incident_id))
+            {
                 chain.push(format!(
                     "  → [{confidence}%] {action}: {why}",
                     confidence = record.confidence,

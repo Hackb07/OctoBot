@@ -5,13 +5,13 @@ static AGENT_NAME_COUNTER: AtomicUsize = AtomicUsize::new(0);
 static SUB_AGENT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 const AGENT_NAMES: &[&str] = &[
-    "atlas", "nova", "helix", "pulse", "vertex", "axiom", "nexus", "orbit",
-    "zen", "flux", "cypher", "echo", "phantom", "solar", "vector",
+    "atlas", "nova", "helix", "pulse", "vertex", "axiom", "nexus", "orbit", "zen", "flux",
+    "cypher", "echo", "phantom", "solar", "vector",
 ];
 
 const SUB_AGENT_NAMES: &[&str] = &[
-    "bolt", "rivet", "stitch", "pin", "gear", "sprocket", "weld", "shim",
-    "latch", "dowel", "grommet", "cam", "pivot", "clamp", "spindle",
+    "bolt", "rivet", "stitch", "pin", "gear", "sprocket", "weld", "shim", "latch", "dowel",
+    "grommet", "cam", "pivot", "clamp", "spindle",
 ];
 
 pub(crate) fn next_agent_name() -> String {

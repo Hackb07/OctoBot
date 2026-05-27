@@ -153,7 +153,7 @@
   },
   "plugins": [
     {
-      "name": "openrouter-research",
+      "name": "groq-research",
       "kind": "Integration",
       "description": "LLM-backed research route for runbook synthesis",
       "version": "0.1.0",

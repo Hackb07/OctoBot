@@ -71,16 +71,18 @@ impl InfraIntegrations {
     /// and service → database patterns based on node names and kinds.
     pub(crate) fn build_topology(&self, nodes: &[InfraNode]) -> Vec<KnowledgeEdge> {
         let mut edges = Vec::new();
-        let by_kind: HashMap<&str, Vec<&InfraNode>> = nodes.iter().fold(HashMap::new(), |mut acc, n| {
-            acc.entry(n.kind.as_str()).or_default().push(n);
-            acc
-        });
+        let by_kind: HashMap<&str, Vec<&InfraNode>> =
+            nodes.iter().fold(HashMap::new(), |mut acc, n| {
+                acc.entry(n.kind.as_str()).or_default().push(n);
+                acc
+            });
 
         // Container → pod: link docker containers to kubernetes pods by name prefix
         if let Some(containers) = by_kind.get("docker-container") {
             if let Some(pods) = by_kind.get("kubernetes-pod") {
                 for container in containers {
-                    let container_base = container.name.split('-').next().unwrap_or(&container.name);
+                    let container_base =
+                        container.name.split('-').next().unwrap_or(&container.name);
                     for pod in pods {
                         if pod.name.starts_with(container_base) {
                             edges.push(KnowledgeEdge {
@@ -121,7 +123,12 @@ impl InfraIntegrations {
                 for db_node in nodes {
                     if db_node.kind == "database" || db_node.kind == "vector-db" {
                         if db_node.name.contains(svc_name)
-                            || svc_name.contains(&db_node.name.trim_end_matches("-primary").trim_end_matches("-vector"))
+                            || svc_name.contains(
+                                &db_node
+                                    .name
+                                    .trim_end_matches("-primary")
+                                    .trim_end_matches("-vector"),
+                            )
                         {
                             edges.push(KnowledgeEdge {
                                 from: node.name.clone(),
@@ -218,12 +225,7 @@ impl InfraIntegrations {
                 "size": 1
             });
             let url = format!("{}/_search", base_url.trim_end_matches('/'));
-            if let Ok(response) = reqwest::Client::new()
-                .post(&url)
-                .json(&body)
-                .send()
-                .await
-            {
+            if let Ok(response) = reqwest::Client::new().post(&url).json(&body).send().await {
                 if response.status().is_success() {
                     tracing::debug!(node = %node.name, "found OpenSearch data");
                 }

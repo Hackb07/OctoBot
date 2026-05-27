@@ -1,5 +1,5 @@
 use crate::{
-    ai::{AgentPrompt, AiClient, AiProviderConfig, AiProviderKind, ToolSpec},
+    ai::{AgentKind, AgentProfile, AgentPrompt, AiClient, ToolSpec},
     infra::InfraIntegrations,
     models::{
         AgentRole, AgentRuntime, AgentRuntimeKind, AgentStatus, ExplainabilityRecord,
@@ -26,7 +26,7 @@ fn allowlist_accepts_read_only_infrastructure_commands() {
         "docker ps",
         "kubectl get pods",
         "journalctl -n 20 --no-pager",
-        "journalctl -f -n 0 --no-pager",
+        "journalctl -f -n 20 --no-pager",
         "systemctl --no-pager --failed",
         "ps aux",
         "df -h",
@@ -119,9 +119,12 @@ fn command_completion_uses_default_commands() {
     );
     assert_eq!(
         command_completion("invest"),
-        Some("investigate nginx_latency")
+        Some("investigate local_model_health")
     );
-    assert_eq!(command_completion(""), Some("investigate nginx_latency"));
+    assert_eq!(
+        command_completion(""),
+        Some("multi-agent Assess Ollama readiness and report findings")
+    );
     assert_eq!(command_completion("unknown"), None);
 }
 
@@ -133,6 +136,8 @@ fn initial_state_has_no_seeded_agents() {
     assert!(state.runtimes.is_empty());
     assert!(state.coordination_links.is_empty());
     assert_eq!(state.active_agents, 0);
+    assert!(state.incidents.is_empty());
+    assert!(state.infra.is_empty());
 }
 
 #[test]
@@ -182,6 +187,43 @@ fn reducer_tracks_dynamic_agent_lifecycle() {
             event.source == "agent-test" && event.summary.contains("task_started=1")
         })
     );
+}
+
+#[test]
+fn reducer_keeps_completed_agent_visible_as_completed() {
+    let mut state = OpsState::seed();
+    state.apply_event(OpsEvent::AgentSpawned {
+        name: "agent-test".into(),
+        role: AgentRole::Research,
+        timestamp: now_ts(),
+    });
+    state.apply_event(OpsEvent::RuntimeUpdated {
+        runtime: AgentRuntime {
+            agent: "agent-test".into(),
+            kind: AgentRuntimeKind::LocalProcess,
+            endpoint: "local://agent/agent-test".into(),
+            status: RuntimeStatus::Active,
+            heartbeat: now_ts(),
+            notes: "running".into(),
+        },
+    });
+    state.apply_event(OpsEvent::AgentLifecycleChanged {
+        agent: "agent-test".into(),
+        status: AgentStatus::Completed,
+        task: "AI task completed after reasoning loop".into(),
+        timestamp: now_ts(),
+    });
+
+    let agent = state
+        .agents
+        .iter()
+        .find(|agent| agent.name == "agent-test")
+        .expect("dynamic agent should be registered");
+    assert_eq!(agent.status, AgentStatus::Completed);
+    assert_eq!(state.active_agents, 0);
+    assert!(state.runtimes.iter().any(|runtime| {
+        runtime.agent == "agent-test" && runtime.status == RuntimeStatus::Local
+    }));
 }
 
 #[test]
@@ -355,11 +397,11 @@ fn event_type_names_are_stable_for_storage() {
 
 #[test]
 fn ai_client_builds_tool_call_request_payload() {
-    let client = AiClient::new(AiProviderConfig {
-        kind: AiProviderKind::OpenAi,
-        endpoint: "https://example.invalid/v1/chat/completions".into(),
+    let client = AiClient::new(AgentProfile {
+        kind: AgentKind::Coding,
+        name: "test-agent".into(),
         model: "test-model".into(),
-        api_key: Some("test-key".into()),
+        purpose: "test".into(),
     });
     let body = client.request_body(&AgentPrompt {
         system: "You are an operations agent".into(),
@@ -382,11 +424,35 @@ fn ai_client_builds_tool_call_request_payload() {
 }
 
 #[test]
+fn ai_client_builds_ollama_unload_request_payload() {
+    let client = AiClient::new(AgentProfile {
+        kind: AgentKind::Coding,
+        name: "test-agent".into(),
+        model: "test-model".into(),
+        purpose: "test".into(),
+    });
+    let body = client.unload_request_body();
+
+    assert_eq!(body["model"], "test-model");
+    assert_eq!(body["prompt"], "");
+    assert_eq!(body["stream"], false);
+    assert_eq!(body["keep_alive"], 0);
+}
+
+#[test]
 fn reducer_records_new_phase_events() {
     let mut state = OpsState::empty();
-    state.apply_event(OpsEvent::AiProviderRegistered {
-        provider: "openai".into(),
-        endpoint: "https://api.openai.com/v1/chat/completions".into(),
+    state.apply_event(OpsEvent::ModelHealthUpdated {
+        models: vec![crate::models::ModelHealthSnapshot {
+            model: "qwen2.5-coder:7b".into(),
+            installed: true,
+            online: true,
+            size_bytes: Some(123),
+            digest: Some("digest".into()),
+            modified_at: Some(now_ts()),
+            last_checked: now_ts(),
+            notes: "installed".into(),
+        }],
         timestamp: now_ts(),
     });
     state.apply_event(OpsEvent::InfrastructureSnapshotRecorded {
@@ -403,7 +469,7 @@ fn reducer_records_new_phase_events() {
 
     assert_eq!(state.infra.len(), 1);
     assert_eq!(state.health, 100);
-    assert!(state.timeline.iter().any(|event| event.source == "openai"));
+    assert_eq!(state.model_health.len(), 1);
 }
 
 #[test]
@@ -549,10 +615,22 @@ fn reducer_tracks_plugins_runtimes_and_sandbox_policy() {
 #[test]
 fn remediation_risk_level_assesses_commands_correctly() {
     let engine = RemediationEngine;
-    assert_eq!(engine.risk_level("systemctl restart nginx", "nginx"), RiskLevel::High);
-    assert_eq!(engine.risk_level("kubectl rollout undo deployment/foo", "foo"), RiskLevel::High);
-    assert_eq!(engine.risk_level("docker restart my-container", "my-container"), RiskLevel::High);
-    assert_eq!(engine.risk_level("kubectl scale deployment/foo --replicas=3", "foo"), RiskLevel::Medium);
+    assert_eq!(
+        engine.risk_level("systemctl restart nginx", "nginx"),
+        RiskLevel::High
+    );
+    assert_eq!(
+        engine.risk_level("kubectl rollout undo deployment/foo", "foo"),
+        RiskLevel::High
+    );
+    assert_eq!(
+        engine.risk_level("docker restart my-container", "my-container"),
+        RiskLevel::High
+    );
+    assert_eq!(
+        engine.risk_level("kubectl scale deployment/foo --replicas=3", "foo"),
+        RiskLevel::Medium
+    );
     assert_eq!(engine.risk_level("uptime", ""), RiskLevel::Low);
     assert_eq!(engine.risk_level("df -h", ""), RiskLevel::Low);
 }
@@ -581,7 +659,12 @@ fn trace_engine_nested_spans() {
     let mut engine = TraceEngine::default();
 
     let parent = engine.start_span(None, "root".into(), "system".into(), &event_tx);
-    let child = engine.start_span(Some(parent.clone()), "child".into(), "subsystem".into(), &event_tx);
+    let child = engine.start_span(
+        Some(parent.clone()),
+        "child".into(),
+        "subsystem".into(),
+        &event_tx,
+    );
 
     assert_eq!(engine.active_span_count(), 2);
 
@@ -599,7 +682,13 @@ fn plugin_registry_crud() {
 
     assert_eq!(registry.count(), 0);
 
-    let native = NativePlugin::new("test-tool", PluginKind::Tool, "A test plugin", "0.1.0", "tester");
+    let native = NativePlugin::new(
+        "test-tool",
+        PluginKind::Tool,
+        "A test plugin",
+        "0.1.0",
+        "tester",
+    );
     assert!(registry.register(Box::new(native)).is_ok());
     assert_eq!(registry.count(), 1);
 

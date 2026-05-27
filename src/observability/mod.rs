@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use tokio::sync::mpsc;
 
 use crate::{
-    ai::{AiClient, AgentPrompt},
+    ai::{AgentPrompt, AiClient},
     models::{
         Incident, KnowledgeEdge, OpsEvent, OpsState, ResearchConfidenceProfile, TimelineEvent,
     },
@@ -123,7 +123,12 @@ impl ObservabilityEngine {
         let infra_summary: String = state
             .infra
             .iter()
-            .map(|n| format!("  {} ({}): health={}, cpu={}, memory={}", n.name, n.kind, n.health, n.cpu, n.memory))
+            .map(|n| {
+                format!(
+                    "  {} ({}): health={}, cpu={}, memory={}",
+                    n.name, n.kind, n.health, n.cpu, n.memory
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
         let edge_summary: String = state
@@ -190,13 +195,11 @@ impl ObservabilityEngine {
             return correlations;
         }
         // Find incidents sharing a service
-        let services: HashMap<&str, Vec<&Incident>> = state.incidents.iter().fold(
-            HashMap::new(),
-            |mut acc, inc| {
+        let services: HashMap<&str, Vec<&Incident>> =
+            state.incidents.iter().fold(HashMap::new(), |mut acc, inc| {
                 acc.entry(inc.service.as_str()).or_default().push(inc);
                 acc
-            },
-        );
+            });
         for (service, incidents) in &services {
             if incidents.len() > 1 {
                 correlations.push(format!(
@@ -209,7 +212,10 @@ impl ObservabilityEngine {
         // Correlate knowledge edges with active incidents
         for edge in &state.knowledge_edges {
             for inc in &state.incidents {
-                if edge.from.contains(&inc.id) || edge.to.contains(&inc.id) || edge.from.contains(&inc.service) {
+                if edge.from.contains(&inc.id)
+                    || edge.to.contains(&inc.id)
+                    || edge.from.contains(&inc.service)
+                {
                     correlations.push(format!(
                         "Edge {}--{}--{} correlates with incident {}",
                         edge.from, edge.relation, edge.to, inc.id
@@ -228,7 +234,11 @@ impl ObservabilityEngine {
                 impacted.push(format!(
                     "{} {} {}",
                     edge.from,
-                    if edge.from == failed_service { "impacts" } else { "depends-on" },
+                    if edge.from == failed_service {
+                        "impacts"
+                    } else {
+                        "depends-on"
+                    },
                     edge.to
                 ));
             }
@@ -258,7 +268,11 @@ impl ObservabilityEngine {
         let related_edges: Vec<&KnowledgeEdge> = state
             .knowledge_edges
             .iter()
-            .filter(|e| e.from.contains(&incident.id) || e.to.contains(&incident.id) || e.from.contains(&incident.service))
+            .filter(|e| {
+                e.from.contains(&incident.id)
+                    || e.to.contains(&incident.id)
+                    || e.from.contains(&incident.service)
+            })
             .collect();
         let related_timeline: Vec<&TimelineEvent> = state
             .timeline
@@ -430,7 +444,10 @@ impl ObservabilityEngine {
                 action: "slo-burn-rate-analysis".into(),
                 why: format!(
                     "Availability={:.1}% (SLO={}%), error budget={:.1}%, burn rate={:.4}/hr",
-                    report.availability, report.slo_target, report.error_budget_remaining, report.burn_rate
+                    report.availability,
+                    report.slo_target,
+                    report.error_budget_remaining,
+                    report.burn_rate
                 ),
                 evidence: vec![
                     format!("availability={:.1}", report.availability),
@@ -489,10 +506,12 @@ impl ObservabilityEngine {
             }
 
             // Generate hypothesis
-            self.generate_hypothesis(ai_client, incident, state, event_tx).await;
+            self.generate_hypothesis(ai_client, incident, state, event_tx)
+                .await;
 
             // Summarize
-            self.summarize_incident(ai_client, incident, state, event_tx).await;
+            self.summarize_incident(ai_client, incident, state, event_tx)
+                .await;
         }
 
         // Predictive alerting

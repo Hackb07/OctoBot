@@ -112,10 +112,7 @@ impl AgentRuntimeManager {
                 self.running_tasks.remove(agent);
             }
             OpsEvent::AgentMemoryStored {
-                agent,
-                key,
-                value,
-                ..
+                agent, key, value, ..
             } => {
                 self.memory.store(agent, key, value);
             }
@@ -130,7 +127,11 @@ impl AgentRuntimeManager {
         }
         let mut ctx = String::from("Previous task memory:\n");
         for entry in entries.iter().rev().take(5) {
-            ctx.push_str(&format!("  [{key}] {value}\n", key = entry.key, value = entry.value));
+            ctx.push_str(&format!(
+                "  [{key}] {value}\n",
+                key = entry.key,
+                value = entry.value
+            ));
         }
         ctx
     }

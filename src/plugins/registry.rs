@@ -6,7 +6,10 @@ use tokio::sync::mpsc;
 use crate::{
     models::{OpsEvent, PluginDescriptor, PluginKind, PluginStatus},
     persistence::PersistenceRuntime,
-    plugins::host::{Plugin, PluginInstance, discover_plugins, emit_plugin_registered, emit_plugin_status_changed, load_plugin_from_dir},
+    plugins::host::{
+        Plugin, PluginInstance, discover_plugins, emit_plugin_registered,
+        emit_plugin_status_changed, load_plugin_from_dir,
+    },
 };
 
 pub(crate) struct PluginRegistry {
@@ -35,7 +38,10 @@ impl PluginRegistry {
             return Err(format!("plugin '{name}' is already registered"));
         }
         let mut instance = PluginInstance::new(plugin);
-        instance.plugin.init().map_err(|e| format!("init failed: {e}"))?;
+        instance
+            .plugin
+            .init()
+            .map_err(|e| format!("init failed: {e}"))?;
         emit_plugin_registered(&self.event_tx, instance.plugin.descriptor());
         self.plugins.insert(name, instance);
         Ok(())
@@ -181,10 +187,7 @@ impl PluginRegistry {
             .iter()
             .map(|d| format!("{:?}", d.kind))
             .collect();
-        format!(
-            "{total} plugins ({enabled} enabled): {}",
-            kinds.join(", ")
-        )
+        format!("{total} plugins ({enabled} enabled): {}", kinds.join(", "))
     }
 }
 
@@ -263,9 +266,7 @@ impl PluginApi {
                     format!("hot-reload: loaded {}", loaded.join(", "))
                 }
             }
-            _ => {
-                "usage: plugin add|enable|disable|remove|list|reload [name] [kind]".into()
-            }
+            _ => "usage: plugin add|enable|disable|remove|list|reload [name] [kind]".into(),
         }
     }
 }

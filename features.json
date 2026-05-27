@@ -320,7 +320,7 @@
           "providers": [
             "OpenAI",
             "Ollama",
-            "OpenRouter"
+            "Groq"
           ],
           "environment": [
             "OCTOBOT_OPENAI_API_KEY",
@@ -328,9 +328,9 @@
             "OCTOBOT_OPENAI_MODEL",
             "OCTOBOT_OLLAMA_URL",
             "OCTOBOT_OLLAMA_MODEL",
-            "OCTOBOT_OPENROUTER_API_KEY",
-            "OCTOBOT_OPENROUTER_BASE_URL",
-            "OCTOBOT_OPENROUTER_MODEL"
+            "OCTOBOT_GROQ_API_KEY",
+            "OCTOBOT_GROQ_BASE_URL",
+            "OCTOBOT_GROQ_MODEL"
           ],
           "limitations": [
             "No autonomous reasoning loops",
@@ -535,7 +535,7 @@
           "name": "Settings tabs",
           "status": "available",
           "tabs": [
-            "OpenRouter",
+            "Groq",
             "PostgreSQL",
             "Qdrant",
             "Prometheus",
@@ -567,7 +567,7 @@
           "name": "External integrations",
           "status": "planned_or_boundary_only",
           "integrations": [
-            "OpenRouter",
+            "Groq",
             "PostgreSQL",
             "Qdrant",
             "Prometheus",

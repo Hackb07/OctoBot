@@ -19,30 +19,53 @@ pub(crate) const DEFAULT_TIMELINE_LIMIT: usize = 160;
 pub(crate) const DEFAULT_RECOVERY_LIMIT: usize = 40;
 
 pub(crate) fn log_limit() -> usize {
-    std::env::var("OCTOBOT_LOG_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_LOG_LIMIT)
+    std::env::var("OCTOBOT_LOG_LIMIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_LOG_LIMIT)
 }
 pub(crate) fn event_limit() -> usize {
-    std::env::var("OCTOBOT_EVENT_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_EVENT_LIMIT)
+    std::env::var("OCTOBOT_EVENT_LIMIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_EVENT_LIMIT)
 }
 pub(crate) fn execution_limit() -> usize {
-    std::env::var("OCTOBOT_EXECUTION_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_EXECUTION_LIMIT)
+    std::env::var("OCTOBOT_EXECUTION_LIMIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_EXECUTION_LIMIT)
 }
 pub(crate) fn explainability_limit() -> usize {
-    std::env::var("OCTOBOT_EXPLAINABILITY_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_EXPLAINABILITY_LIMIT)
+    std::env::var("OCTOBOT_EXPLAINABILITY_LIMIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_EXPLAINABILITY_LIMIT)
 }
 pub(crate) fn coordination_limit() -> usize {
-    std::env::var("OCTOBOT_COORDINATION_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_COORDINATION_LIMIT)
+    std::env::var("OCTOBOT_COORDINATION_LIMIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_COORDINATION_LIMIT)
 }
 pub(crate) fn timeline_limit() -> usize {
-    std::env::var("OCTOBOT_TIMELINE_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_TIMELINE_LIMIT)
+    std::env::var("OCTOBOT_TIMELINE_LIMIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_TIMELINE_LIMIT)
 }
 pub(crate) fn recovery_limit() -> usize {
-    std::env::var("OCTOBOT_RECOVERY_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_RECOVERY_LIMIT)
+    std::env::var("OCTOBOT_RECOVERY_LIMIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_RECOVERY_LIMIT)
 }
 
-pub(crate) const COMMAND_SUGGESTIONS: [&str; 30] = [
-    "investigate nginx_latency",
-    "spawn-agent research",
+pub(crate) const COMMAND_SUGGESTIONS: [&str; 31] = [
+    "multi-agent Assess Ollama readiness and report findings",
+    "investigate local_model_health",
+    "spawn-agent planner",
+    "tasks-report",
     "analyze-logs auth-service",
     "generate-report incident_042",
     "recover edge-nginx",
@@ -60,7 +83,7 @@ pub(crate) const COMMAND_SUGGESTIONS: [&str; 30] = [
     "exec systemctl --no-pager --failed",
     "exec journalctl -n 40 --no-pager",
     "research confidence",
-    "plugin enable openrouter-research",
+    "plugin enable local-research",
     "plugin disable workflow-rca",
     "plugin add runbook-index integration",
     "runtime set agent-remote remote ssh://research-node-01",
@@ -68,7 +91,6 @@ pub(crate) const COMMAND_SUGGESTIONS: [&str; 30] = [
     "sandbox policy operator restart",
     "sandbox policy admin rollback",
     "assign <agent_id> <task>",
-    "login openai <api_key>",
     "login ollama <url>",
-    "login openrouter <api_key>",
+    "login ollama http://localhost:11434",
 ];

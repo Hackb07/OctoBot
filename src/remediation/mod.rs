@@ -1,9 +1,7 @@
 use tokio::sync::mpsc;
 
 use crate::{
-    models::{
-        ExplainabilityRecord, OpsEvent, OpsState, RecoveryAction, RecoveryStatus, UserRole,
-    },
+    models::{ExplainabilityRecord, OpsEvent, OpsState, RecoveryAction, RecoveryStatus, UserRole},
     runtime::parse_allowlisted_command,
     utils::{next_id, now_ts},
 };
@@ -34,9 +32,11 @@ impl RemediationEngine {
         // 2. Evaluate risk level
         let risk_level = self.risk_level(command, target);
         let requires_approval = risk_level == RiskLevel::High
-            || state.sandbox_policy.review_required_for.iter().any(|pattern| {
-                command.contains(pattern) || target.contains(pattern)
-            });
+            || state
+                .sandbox_policy
+                .review_required_for
+                .iter()
+                .any(|pattern| command.contains(pattern) || target.contains(pattern));
 
         // 3. Check RBAC
         let role = &state.current_role;
@@ -120,9 +120,7 @@ impl RemediationEngine {
             RiskLevel::High
         } else if command.starts_with("kubectl scale") {
             RiskLevel::Medium
-        } else if command.starts_with("systemctl start")
-            || command.starts_with("systemctl stop")
-        {
+        } else if command.starts_with("systemctl start") || command.starts_with("systemctl stop") {
             RiskLevel::Medium
         } else {
             RiskLevel::Low
@@ -151,7 +149,11 @@ impl RemediationEngine {
             record: ExplainabilityRecord {
                 id: next_id("exp-verify"),
                 action: format!("remediation-execute-{}", action.id),
-                why: format!("Executing {cmd} on {target}", cmd = action.command, target = action.target),
+                why: format!(
+                    "Executing {cmd} on {target}",
+                    cmd = action.command,
+                    target = action.target
+                ),
                 evidence: vec![
                     format!("action_id={}", action.id),
                     format!("command={}", action.command),
@@ -176,7 +178,10 @@ impl RemediationEngine {
                 record: ExplainabilityRecord {
                     id: next_id("exp-verified"),
                     action: format!("remediation-verified-{}", action.id),
-                    why: format!("Recovery verified: {target} health >= 80", target = action.target),
+                    why: format!(
+                        "Recovery verified: {target} health >= 80",
+                        target = action.target
+                    ),
                     evidence: vec!["remediation_successful".into()],
                     confidence: 95,
                     tools_used: vec!["remediation-engine".into()],
@@ -184,12 +189,20 @@ impl RemediationEngine {
                 },
             });
         } else {
-            let health = state.infra.iter().find(|n| n.name == action.target).map(|n| n.health).unwrap_or(0);
+            let health = state
+                .infra
+                .iter()
+                .find(|n| n.name == action.target)
+                .map(|n| n.health)
+                .unwrap_or(0);
             let _ = event_tx.send(OpsEvent::ExplainabilityRecorded {
                 record: ExplainabilityRecord {
                     id: next_id("exp-verify-failed"),
                     action: format!("remediation-verify-failed-{}", action.id),
-                    why: format!("Recovery may not have succeeded: {target} health = {health}", target = action.target),
+                    why: format!(
+                        "Recovery may not have succeeded: {target} health = {health}",
+                        target = action.target
+                    ),
                     evidence: vec![
                         "remediation_verification_failed".into(),
                         format!("target_health={health}"),

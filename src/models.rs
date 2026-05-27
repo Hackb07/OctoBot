@@ -36,6 +36,7 @@ pub(crate) enum AgentStatus {
     Idle,
     Running,
     Waiting,
+    Completed,
     Escalated,
     Failed,
 }
@@ -139,6 +140,28 @@ pub(crate) struct ResearchConfidenceProfile {
     pub(crate) ranking: u8,
     pub(crate) last_reviewed: String,
     pub(crate) signals: Vec<ResearchSignal>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ModelHealthSnapshot {
+    pub(crate) model: String,
+    pub(crate) installed: bool,
+    pub(crate) online: bool,
+    pub(crate) size_bytes: Option<u64>,
+    pub(crate) digest: Option<String>,
+    pub(crate) modified_at: Option<String>,
+    pub(crate) last_checked: String,
+    pub(crate) notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub(crate) struct TokenUsageSnapshot {
+    pub(crate) requests: u64,
+    pub(crate) prompt_tokens: u64,
+    pub(crate) completion_tokens: u64,
+    pub(crate) total_tokens: u64,
+    pub(crate) retries: u64,
+    pub(crate) errors: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -291,6 +314,29 @@ pub(crate) enum OpsEvent {
         tool: String,
         success: bool,
         output: serde_json::Value,
+        timestamp: String,
+    },
+    ReasoningChunkRecorded {
+        agent: String,
+        model: String,
+        chunk: String,
+        timestamp: String,
+    },
+    TokenUsageRecorded {
+        agent: String,
+        model: String,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        total_tokens: u64,
+        timestamp: String,
+    },
+    ModelHealthUpdated {
+        models: Vec<ModelHealthSnapshot>,
+        timestamp: String,
+    },
+    NotificationRaised {
+        level: String,
+        message: String,
         timestamp: String,
     },
     TaskAssigned {
@@ -496,6 +542,10 @@ pub(crate) struct OpsState {
     pub(crate) logs: Vec<String>,
     pub(crate) reports: Vec<String>,
     pub(crate) topology: TopologySnapshot,
+    pub(crate) model_health: Vec<ModelHealthSnapshot>,
+    pub(crate) token_usage: TokenUsageSnapshot,
+    pub(crate) reasoning_stream: Vec<String>,
+    pub(crate) notifications: Vec<String>,
 }
 
 impl OpsState {
@@ -504,7 +554,7 @@ impl OpsState {
             workspace: "octobot-ops".into(),
             environment: "prod / us-east".into(),
             uptime_secs: 0,
-            health: 0,
+            health: 100,
             alert_count: 0,
             active_agents: 0,
             metrics: Vec::new(),
@@ -547,244 +597,15 @@ impl OpsState {
             logs: Vec::new(),
             reports: Vec::new(),
             topology: TopologySnapshot::default(),
+            model_health: Vec::new(),
+            token_usage: TokenUsageSnapshot::default(),
+            reasoning_stream: Vec::new(),
+            notifications: Vec::new(),
         }
     }
 
     pub(crate) fn seed() -> Self {
-        Self {
-            workspace: "octobot-ops".into(),
-            environment: "prod / us-east".into(),
-            uptime_secs: 0,
-            health: 94,
-            alert_count: 3,
-            active_agents: 0,
-            metrics: vec![36, 42, 40, 45, 51, 49, 58, 62, 59, 63, 68, 64],
-            agents: Vec::new(),
-            workflows: Vec::new(),
-            incidents: vec![
-                Incident {
-                    id: "inc-042".into(),
-                    service: "edge-nginx".into(),
-                    severity: "SEV2".into(),
-                    hypothesis: "TLS handshakes queueing after ingress rollout".into(),
-                    status: "investigating".into(),
-                },
-                Incident {
-                    id: "inc-039".into(),
-                    service: "auth-service".into(),
-                    severity: "SEV3".into(),
-                    hypothesis: "Token cache saturation during deploy window".into(),
-                    status: "monitoring".into(),
-                },
-            ],
-            infra: vec![
-                InfraNode {
-                    name: "edge-nginx-7d9c".into(),
-                    kind: "deployment".into(),
-                    health: 78,
-                    cpu: 72,
-                    memory: 64,
-                },
-                InfraNode {
-                    name: "auth-service".into(),
-                    kind: "service".into(),
-                    health: 86,
-                    cpu: 48,
-                    memory: 81,
-                },
-                InfraNode {
-                    name: "postgres-primary".into(),
-                    kind: "database".into(),
-                    health: 93,
-                    cpu: 38,
-                    memory: 58,
-                },
-                InfraNode {
-                    name: "qdrant-vector".into(),
-                    kind: "vector-db".into(),
-                    health: 97,
-                    cpu: 29,
-                    memory: 44,
-                },
-            ],
-            executions: Vec::new(),
-            explainability: vec![ExplainabilityRecord {
-                id: "exp-0001".into(),
-                action: "Open incident inc-042 investigation".into(),
-                why: "Latency alert and ingress rollout timing overlap require triage.".into(),
-                evidence: vec![
-                    "edge-nginx p95 crossed 820ms for 4m".into(),
-                    "deploy-1188 occurred inside the alert window".into(),
-                ],
-                confidence: 72,
-                tools_used: vec!["prometheus".into(), "loki".into()],
-                timestamp: now_ts(),
-            }],
-            coordination_links: Vec::new(),
-            timeline: vec![
-                TimelineEvent {
-                    id: "time-0001".into(),
-                    timestamp: now_ts(),
-                    category: TimelineCategory::Deployment,
-                    source: "deploy-1188".into(),
-                    summary: "edge-nginx ingress rollout started inside alert window".into(),
-                    cpu: None,
-                    memory: None,
-                    related_incident: Some("inc-042".into()),
-                },
-                TimelineEvent {
-                    id: "time-0002".into(),
-                    timestamp: now_ts(),
-                    category: TimelineCategory::Incident,
-                    source: "alertmanager".into(),
-                    summary: "p95 latency crossed threshold after rollout".into(),
-                    cpu: Some(72),
-                    memory: Some(64),
-                    related_incident: Some("inc-042".into()),
-                },
-            ],
-            recovery_actions: vec![RecoveryAction {
-                id: "rec-0001".into(),
-                name: "Restart edge-nginx".into(),
-                command: "systemctl restart edge-nginx".into(),
-                target: "edge-nginx".into(),
-                status: RecoveryStatus::AwaitingApproval,
-                risk: "brief connection draining and reload churn".into(),
-                requires_role: UserRole::Operator,
-                evidence: vec![
-                    "latency alert overlaps ingress rollout".into(),
-                    "systemd status check is required before execution".into(),
-                ],
-                requested_by: "workflow-engine".into(),
-                approved_by: None,
-                dry_run_only: true,
-                timestamp: now_ts(),
-            }],
-            research_profile: ResearchConfidenceProfile {
-                subject: "nginx_latency".into(),
-                evidence_reliability: 78,
-                contradiction_count: 1,
-                ranking: 82,
-                last_reviewed: now_ts(),
-                signals: vec![
-                    ResearchSignal {
-                        source: "prometheus".into(),
-                        evidence: "p95 latency and request rate correlated with rollout".into(),
-                        reliability: 83,
-                        contradiction: false,
-                    },
-                    ResearchSignal {
-                        source: "journald".into(),
-                        evidence: "restart spikes and TLS handshake retries observed".into(),
-                        reliability: 76,
-                        contradiction: false,
-                    },
-                    ResearchSignal {
-                        source: "runbook".into(),
-                        evidence: "rollback is safe but requires operator approval".into(),
-                        reliability: 71,
-                        contradiction: true,
-                    },
-                ],
-            },
-            plugins: vec![
-                PluginDescriptor {
-                    name: "openrouter-research".into(),
-                    kind: PluginKind::Integration,
-                    description: "LLM-backed research route for runbook synthesis".into(),
-                    version: "0.1.0".into(),
-                    status: PluginStatus::Registered,
-                    owner: "platform".into(),
-                },
-                PluginDescriptor {
-                    name: "prometheus-triage".into(),
-                    kind: PluginKind::Tool,
-                    description: "Prometheus evidence collector for active incidents".into(),
-                    version: "0.1.0".into(),
-                    status: PluginStatus::Enabled,
-                    owner: "triage-01".into(),
-                },
-                PluginDescriptor {
-                    name: "workflow-rca".into(),
-                    kind: PluginKind::Workflow,
-                    description: "Auto-generates report-ready RCA outlines".into(),
-                    version: "0.1.0".into(),
-                    status: PluginStatus::Registered,
-                    owner: "reporter-01".into(),
-                },
-            ],
-            runtimes: Vec::new(),
-            knowledge_nodes: vec![
-                KnowledgeNode {
-                    id: "svc-edge-nginx".into(),
-                    label: "edge-nginx".into(),
-                    kind: "service".into(),
-                    confidence: 93,
-                },
-                KnowledgeNode {
-                    id: "inc-042".into(),
-                    label: "incident inc-042".into(),
-                    kind: "incident".into(),
-                    confidence: 89,
-                },
-                KnowledgeNode {
-                    id: "deploy-1188".into(),
-                    label: "deploy-1188".into(),
-                    kind: "deployment".into(),
-                    confidence: 84,
-                },
-                KnowledgeNode {
-                    id: "metric-p95".into(),
-                    label: "latency p95".into(),
-                    kind: "metric".into(),
-                    confidence: 90,
-                },
-            ],
-            knowledge_edges: vec![
-                KnowledgeEdge {
-                    from: "deploy-1188".into(),
-                    relation: "triggered".into(),
-                    to: "inc-042".into(),
-                    weight: 86,
-                    timestamp: now_ts(),
-                },
-                KnowledgeEdge {
-                    from: "metric-p95".into(),
-                    relation: "correlates-with".into(),
-                    to: "svc-edge-nginx".into(),
-                    weight: 91,
-                    timestamp: now_ts(),
-                },
-                KnowledgeEdge {
-                    from: "inc-042".into(),
-                    relation: "impacts".into(),
-                    to: "svc-edge-nginx".into(),
-                    weight: 88,
-                    timestamp: now_ts(),
-                },
-            ],
-            sandbox_policy: SandboxPolicy {
-                mode: "read-only allowlist".into(),
-                persisted: true,
-                approved_roles: vec![UserRole::Admin, UserRole::Operator],
-                review_required_for: vec!["restart".into(), "rollback".into(), "cleanup".into()],
-                updated_at: now_ts(),
-            },
-            current_role: UserRole::ReadOnly,
-            replay: ReplayCursor {
-                active: false,
-                position: 0,
-                total: 0,
-                last_event: None,
-            },
-            events: Vec::new(),
-            logs: Vec::new(),
-            reports: vec![
-                "inc-042: evidence graph 63% complete, 7 validated claims".into(),
-                "daily-sre: availability summary waiting on OpenSearch export".into(),
-            ],
-            topology: TopologySnapshot::default(),
-        }
+        Self::empty()
     }
 
     pub(crate) fn tick(&mut self) {
@@ -872,7 +693,10 @@ impl OpsState {
                     .agents
                     .iter()
                     .filter(|agent| {
-                        agent.status != AgentStatus::Idle && agent.status != AgentStatus::Failed
+                        !matches!(
+                            agent.status,
+                            AgentStatus::Idle | AgentStatus::Completed | AgentStatus::Failed
+                        )
                     })
                     .count();
                 self.record_timeline(TimelineEvent {
@@ -901,7 +725,9 @@ impl OpsState {
                     runtime.notes = task.clone();
                     runtime.status = match status {
                         AgentStatus::Running => RuntimeStatus::Active,
-                        AgentStatus::Idle | AgentStatus::Waiting => RuntimeStatus::Local,
+                        AgentStatus::Idle | AgentStatus::Waiting | AgentStatus::Completed => {
+                            RuntimeStatus::Local
+                        }
                         AgentStatus::Escalated | AgentStatus::Failed => RuntimeStatus::Suspended,
                     };
                 }
@@ -909,7 +735,10 @@ impl OpsState {
                     .agents
                     .iter()
                     .filter(|item| {
-                        item.status != AgentStatus::Idle && item.status != AgentStatus::Failed
+                        !matches!(
+                            item.status,
+                            AgentStatus::Idle | AgentStatus::Completed | AgentStatus::Failed
+                        )
                     })
                     .count();
                 self.record_timeline(TimelineEvent {
@@ -957,9 +786,7 @@ impl OpsState {
                 });
             }
             OpsEvent::AiProviderLogin {
-                kind,
-                timestamp,
-                ..
+                kind, timestamp, ..
             } => {
                 self.record_timeline(TimelineEvent {
                     id: format!("time-ai-login-{kind}-{timestamp}"),
@@ -967,6 +794,86 @@ impl OpsState {
                     category: TimelineCategory::Agent,
                     source: kind.clone(),
                     summary: format!("AI provider {kind} configured via /login"),
+                    cpu: None,
+                    memory: None,
+                    related_incident: None,
+                });
+            }
+            OpsEvent::ReasoningChunkRecorded {
+                agent,
+                model,
+                chunk,
+                timestamp,
+            } => {
+                self.reasoning_stream
+                    .push(format!("{agent} [{model}]: {chunk}"));
+                if self.reasoning_stream.len() > 120 {
+                    let drop_count = self.reasoning_stream.len() - 120;
+                    self.reasoning_stream.drain(0..drop_count);
+                }
+                self.record_timeline(TimelineEvent {
+                    id: format!("time-reasoning-{agent}-{timestamp}"),
+                    timestamp: timestamp.clone(),
+                    category: TimelineCategory::Agent,
+                    source: agent.clone(),
+                    summary: chunk.clone(),
+                    cpu: None,
+                    memory: None,
+                    related_incident: None,
+                });
+            }
+            OpsEvent::TokenUsageRecorded {
+                agent,
+                model,
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+                timestamp,
+            } => {
+                self.token_usage.requests += 1;
+                self.token_usage.prompt_tokens += *prompt_tokens;
+                self.token_usage.completion_tokens += *completion_tokens;
+                self.token_usage.total_tokens += *total_tokens;
+                self.record_timeline(TimelineEvent {
+                    id: format!("time-usage-{agent}-{timestamp}"),
+                    timestamp: timestamp.clone(),
+                    category: TimelineCategory::Agent,
+                    source: agent.clone(),
+                    summary: format!("{model}: {prompt_tokens}+{completion_tokens} tokens"),
+                    cpu: None,
+                    memory: None,
+                    related_incident: None,
+                });
+            }
+            OpsEvent::ModelHealthUpdated { models, timestamp } => {
+                self.model_health = models.clone();
+                self.record_timeline(TimelineEvent {
+                    id: format!("time-model-health-{timestamp}"),
+                    timestamp: timestamp.clone(),
+                    category: TimelineCategory::Agent,
+                    source: "ollama".into(),
+                    summary: format!("{} model health records updated", models.len()),
+                    cpu: None,
+                    memory: None,
+                    related_incident: None,
+                });
+            }
+            OpsEvent::NotificationRaised {
+                level,
+                message,
+                timestamp,
+            } => {
+                self.notifications.push(format!("[{level}] {message}"));
+                if self.notifications.len() > 80 {
+                    let drop_count = self.notifications.len() - 80;
+                    self.notifications.drain(0..drop_count);
+                }
+                self.record_timeline(TimelineEvent {
+                    id: format!("time-notify-{timestamp}"),
+                    timestamp: timestamp.clone(),
+                    category: TimelineCategory::Agent,
+                    source: level.clone(),
+                    summary: message.clone(),
                     cpu: None,
                     memory: None,
                     related_incident: None,
@@ -1021,20 +928,18 @@ impl OpsState {
                     runtime.heartbeat = timestamp.clone();
                     runtime.notes = task.clone();
                 }
+                let confidence = dynamic_assignment_confidence(self);
                 self.record_agent_link(
                     "workflow-engine",
                     agent,
                     "task-assignment",
                     task,
-                    74,
+                    confidence,
                     timestamp,
                 );
             }
             OpsEvent::AgentMemoryStored {
-                agent,
-                key,
-                value,
-                ..
+                agent, key, value, ..
             } => {
                 self.record_timeline(TimelineEvent {
                     id: format!("memory-{agent}-{key}"),
@@ -1054,7 +959,14 @@ impl OpsState {
                 timestamp,
             } => {
                 for (i, sub) in sub_tasks.iter().enumerate() {
-                    self.record_agent_link(planner, sub, "plan-subtask", task, 70 + i as u8, timestamp);
+                    self.record_agent_link(
+                        planner,
+                        sub,
+                        "plan-subtask",
+                        task,
+                        70 + i as u8,
+                        timestamp,
+                    );
                 }
                 self.record_timeline(TimelineEvent {
                     id: format!("plan-{planner}-{timestamp}"),
@@ -1469,9 +1381,11 @@ impl OpsState {
         confidence: u8,
         timestamp: &str,
     ) {
-        if let Some(existing) = self.coordination_links.iter_mut().find(|link| {
-            link.from == from && link.to == to && link.protocol == protocol
-        }) {
+        if let Some(existing) = self
+            .coordination_links
+            .iter_mut()
+            .find(|link| link.from == from && link.to == to && link.protocol == protocol)
+        {
             existing.message = message.into();
             existing.confidence = confidence;
             existing.timestamp = timestamp.into();
@@ -1608,4 +1522,24 @@ impl OpsState {
             self.research_profile.signals.drain(0..drop_count);
         }
     }
+}
+
+/// Compute a dynamic assignment confidence score based on current state.
+/// Higher values mean the system is more confident in task assignments.
+pub(crate) fn dynamic_assignment_confidence(state: &OpsState) -> u8 {
+    let health_factor = state.health as u16;
+    let agent_factor = (state.active_agents.min(10) as u16).saturating_mul(3);
+    let infra_health_avg = if state.infra.is_empty() {
+        80u16
+    } else {
+        state.infra.iter().map(|n| n.health as u16).sum::<u16>() / state.infra.len() as u16
+    };
+    let alert_penalty = (state.alert_count as u16).saturating_mul(5);
+    let base = 65u16;
+    let score = base
+        .saturating_add(health_factor / 4)
+        .saturating_add(agent_factor)
+        .saturating_add(infra_health_avg / 5)
+        .saturating_sub(alert_penalty);
+    score.clamp(20, 98) as u8
 }

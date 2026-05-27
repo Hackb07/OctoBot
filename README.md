@@ -1,6 +1,23 @@
 # OctoBot
 
-Terminal-native AI operations control center built with Rust and Ratatui. Keyboard-first DevOps console for monitoring, agent orchestration, incident investigation, infrastructure command execution, and operational reporting.
+OctoBot is a terminal-native AI operations control center built with Rust and Ratatui. It gives SRE, platform, DevOps, and security teams one keyboard-first console for incident investigation, AI agent orchestration, safe infrastructure command execution, workflow automation, operational memory, reporting, and audit replay.
+
+Use OctoBot when you want to:
+
+- Investigate incidents from a terminal without switching between dashboards, logs, commands, and notes.
+- Delegate operational tasks to local AI agents backed by Ollama.
+- Run allowlisted infrastructure checks with an event trail.
+- Track recovery approvals, command output, explainability, and generated reports.
+- Load YAML DAG workflows for repeatable incident or maintenance procedures.
+- Persist event history and semantic memory with PostgreSQL and Qdrant when needed.
+
+## Documentation
+
+| Document | Use it for |
+|----------|------------|
+| [Quickstart Guide](docs/quickstart.md) | Install, run, and test the app quickly with working examples. |
+| [User Guide](docs/user-guide.md) | Detailed command examples, feature walkthroughs, agent testing, and use-case recipes. |
+| [Deployment Reference](docs/deployment.md) | Production-style setup, optional backends, environment variables, API, plugins, and troubleshooting. |
 
 ## Quick Start
 
@@ -10,21 +27,19 @@ cargo run
 
 Press `/` for commands, **1-9** for views, **Tab** to cycle, **q** to quit.
 
-Full walkthrough: [`docs/quickstart.md`](docs/quickstart.md)
-
 ## Commands
 
 | Command | Description |
 |---------|-------------|
+| `/multi-agent <task>` | Delegate a task to planner/executor agents |
 | `/spawn-agent research` | Register a dynamic AI agent |
 | `/assign <agent> <task>` | Assign a task to an agent |
+| `/tasks-report` | Generate a report of recent agent task events |
 | `/investigate <name>` | Create an incident and start investigation |
 | `/exec <command>` | Run an allowlisted infra command |
 | `/analyze-logs <service>` | Request log analysis |
 | `/generate-report <name>` | Export a JSON report |
-| `/login openai <key>` | Set AI provider at runtime |
 | `/login ollama <url>` | Set Ollama endpoint at runtime |
-| `/login openrouter <key>` | Set OpenRouter at runtime |
 | `/recover <service>` | Propose a recovery action |
 | `/approve <id>` | Approve a recovery (requires Operator+) |
 | `/role <role>` | Switch role (admin/operator/readonly/security) |
@@ -33,9 +48,6 @@ Full walkthrough: [`docs/quickstart.md`](docs/quickstart.md)
 | `/plugin add <name> <kind>` | Register a new plugin |
 | `/plugin enable <name>` | Enable a registered plugin |
 | `/plugin disable <name>` | Disable an enabled plugin |
-| `/plugin remove <name>` | Unregister a plugin |
-| `/plugin list` | List all registered plugins |
-| `/plugin reload` | Hot-reload plugins from directory |
 | `/sandbox policy <role> <action>` | Update sandbox approval policy |
 | `/runtime set <agent> <kind> <endpoint>` | Register a distributed runtime |
 | `/replay start` / `/replay step` | Walk through recorded events |
@@ -56,21 +68,17 @@ Allowlisted `/exec` commands: `docker ps`, `kubectl get pods`, `journalctl`, `sy
 | 8 | Reports | Operational report queue, explainability ledger |
 | 9 | Settings | Providers, plugin registry, sandbox policy, distributed runtimes |
 
-## AI Providers
+## AI Runtime
 
 Configure at launch via env vars:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OCTOBOT_OPENAI_API_KEY` | — | OpenAI API key |
-| `OCTOBOT_OPENAI_MODEL` | `gpt-4.1-mini` | OpenAI model |
-| `OCTOBOT_OPENAI_BASE_URL` | `https://api.openai.com/v1/chat/completions` | OpenAI endpoint |
-| `OCTOBOT_OLLAMA_URL` | — | Ollama endpoint URL |
-| `OCTOBOT_OLLAMA_MODEL` | `llama3.1` | Ollama model |
-| `OCTOBOT_OPENROUTER_API_KEY` | — | OpenRouter API key |
-| `OCTOBOT_OPENROUTER_MODEL` | `openrouter/free` | OpenRouter model |
+| `OCTOBOT_OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint URL |
+| `OCTOBOT_OLLAMA_MODEL` | `llama3.1:8b` | Ollama model used by runtime login |
+| `OCTOBOT_OLLAMA_RETRIES` | `2` | Ollama request retry count |
 
-Or configure at runtime with `/login` — no restart needed. Keys are never persisted.
+Or configure at runtime with `/login ollama <url>` — no restart needed.
 
 ## Persistence (optional)
 
@@ -132,11 +140,11 @@ GET  /api/sessions
     ├── utils.rs             # IDs, timestamps, formatting
     ├── constants.rs         # Navigation items and command suggestions
     ├── reports.rs           # JSON report generation
-    ├── tests.rs             # Unit tests (25)
+    ├── tests.rs             # Unit tests (27)
     │
     ├── agents/              # Agent registry, runtime manager, memory
     │   └── mod.rs
-    ├── ai/                  # OpenAI, Ollama, OpenRouter clients
+    ├── ai/                  # Ollama client, model health, streaming, tool calls
     │   └── mod.rs
     ├── infra/               # Docker, K8s, Prometheus, Loki, OpenSearch, PG
     │   └── mod.rs
@@ -156,6 +164,27 @@ GET  /api/sessions
         ├── mod.rs
         ├── host.rs
         └── registry.rs
+```
+
+## Architecture
+
+```mermaid
+flowchart TD
+    UI[Ratatui TUI] -->|commands| Events[OpsEvent bus]
+    API[Axum API] -->|state queries| State[OpsState reducer]
+    Events --> Runtime[Runtime loop]
+    Runtime --> Agents[Agent runtime manager]
+    Runtime --> AI[Ollama AI client]
+    Runtime --> Workflows[DAG workflow scheduler]
+    Runtime --> Infra[Infrastructure integrations]
+    Runtime --> Remediation[Remediation engine]
+    Runtime --> Persistence[PostgreSQL + Qdrant]
+    AI -->|chat/generate/tool calls| Ollama[(Ollama models)]
+    AI -->|completed task cleanup| Unload[Unload model with keep_alive=0]
+    Events --> State
+    Persistence -->|replay/reconstruct| State
+    State --> UI
+    State --> API
 ```
 
 ## Controls
@@ -180,12 +209,14 @@ GET  /api/sessions
 - [x] **Agent runtime manager** — `AgentRuntimeManager::handle_event()` processes spawn/task/lifecycle/memory events (`src/agents.rs`)
 - [x] **Planner/Executor architecture** — `AgentRole::Planner` and `Executor` variants; planner agents decompose tasks via `create_subtask`/`finalize_plan` tools; executor agents run sub-tasks with full tool access (`src/runtime.rs:505‑680`)
 - [x] **Agent lifecycle management** — `AgentSpawned`, `AgentLifecycleChanged`, `AgentTelemetryRecorded` events with state transitions (`src/agents.rs:90‑130`)
-- [x] **AI provider integration** — OpenAI, Ollama, OpenRouter via `AiProviderKind` enum; configurable at launch (env vars) or runtime (`/login` command) (`src/ai.rs`)
+- [x] **Ollama AI runtime integration** — local Ollama client with model health checks, streaming, token usage tracking, runtime `/login`, and completed-task model unload (`src/ai.rs`)
 - [x] **Tool-calling support** — `ToolSpec`/`ToolCall`/`AiResponse` types; OpenAI-compatible tool format; runs `exec_command` (allowlisted) and `complete_task` tools (`src/ai.rs:66‑300`)
 - [x] **Structured tool execution** — `execute_ai_tool()` spawns real subprocesses via `tokio::process::Command`, captures stdout/stderr/exit_code (`src/runtime.rs:682‑783`)
 - [x] **Agent memory** — `AgentMemory` with per-agent key-value store; `memory_context()` injects last 5 entries into AI system prompts; `AgentMemoryStored` events for persistence (`src/agents.rs:14‑55, 126‑136`)
 - [x] **Inter-agent communication** — `AgentMessageRecorded` event; planner→executor `plan-execute` protocol in `handle_planner_task()` (`src/runtime.rs:630‑653`)
 - [x] **Reasoning loops** — multi-turn AI loop up to `OCTOBOT_AI_MAX_TURNS` (default 5); feeds tool results back as history; breaks on `complete_task` or content-only response (`src/runtime.rs:321‑503`)
+- [x] **Completed task status** — successful agent and planner tasks transition to `Completed` instead of falling back to `Idle` (`src/models.rs`, `src/runtime.rs`, `src/ui.rs`)
+- [x] **Completed task model unload** — after a task reaches `Completed`, the Ollama model is unloaded with `keep_alive=0` to release local memory (`src/ai.rs`, `src/runtime.rs`)
 - [x] **Retry/failure recovery** — 500ms sleep + retry on transient AI failures; marks agent `Failed` after max turns (`src/runtime.rs:448‑468`)
 - [x] **Runtime telemetry** — `AgentTelemetryRecorded` on registration and task start; rendered as timeline events (`src/agents.rs:169‑174, 207‑212`)
 
@@ -291,5 +322,5 @@ GET  /api/sessions
 ## Development
 
 ```bash
-cargo fmt && cargo check && cargo test   # 25 tests
+cargo fmt && cargo check && cargo test   # 27 tests
 ```

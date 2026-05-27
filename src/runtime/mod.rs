@@ -15,16 +15,17 @@ use tokio::{
 
 use crate::{
     agents::AgentRuntimeManager,
-    ai::{AgentPrompt, AiClient, AiProviderConfig, ToolSpec, ToolCallResult, build_messages},
-    infra::InfraIntegrations,
-    models::{
-        AgentRole, OpsEvent, OpsState, RecoveryAction, RecoveryStatus, UserRole,
+    ai::{
+        AgentKind, AgentPrompt, AiClient, ToolCallResult, ToolSpec, agent_kind_for_role,
+        build_messages, default_agent_profiles,
     },
+    infra::InfraIntegrations,
+    models::{AgentRole, OpsEvent, OpsState, RecoveryAction, RecoveryStatus, UserRole},
     observability::ObservabilityEngine,
     persistence::PersistenceRuntime,
-    utils::{next_id, next_sub_agent_name, now_ts},
+    utils::{next_agent_name, next_id, next_sub_agent_name, now_ts},
     workflows::{
-        load_workflows_from_dir, DagWorkflowRuntime, NodeStatus, WorkflowNode, WorkflowNodeKind,
+        DagWorkflowRuntime, NodeStatus, WorkflowNode, WorkflowNodeKind, load_workflows_from_dir,
     },
 };
 
@@ -34,12 +35,12 @@ pub(crate) async fn ops_runtime(
     event_tx: mpsc::UnboundedSender<OpsEvent>,
 ) {
     let started = Instant::now();
-    let mut state = OpsState::seed();
+    let mut state = OpsState::empty();
     let mut agent_runtime = AgentRuntimeManager::default();
     let persistence = PersistenceRuntime::from_env().await;
     let infra = InfraIntegrations::from_env();
     let mut ai_clients = build_ai_clients();
-    register_configured_ai_providers(&event_tx);
+    register_ollama_models(&event_tx, &ai_clients).await;
     let mut dag_workflows: Vec<DagWorkflowRuntime> = load_configured_workflows(&event_tx);
     if let Err(error) = persistence.reconstruct_state().await {
         tracing::warn!(%error, "historical state reconstruction failed");
@@ -48,6 +49,7 @@ pub(crate) async fn ops_runtime(
     let mut infra_interval = time::interval(Duration::from_secs(30));
     let mut observability_interval = time::interval(Duration::from_secs(60));
     let mut pending_tasks: HashMap<String, String> = HashMap::new();
+    let mut startup_workflow_started = false;
     // Maps command_id → (workflow_id, node_id, command)
     let mut pending_workflow_nodes: HashMap<String, (String, String, String)> = HashMap::new();
     let mut observability = ObservabilityEngine::default();
@@ -89,13 +91,33 @@ pub(crate) async fn ops_runtime(
                 }
             }
             _ = observability_interval.tick() => {
-                let ai_client = ai_clients.first();
+                let ai_client = client_for_kind(&ai_clients, AgentKind::Security);
                 observability.analyze_incidents(ai_client, &state, &event_tx).await;
                 observability.analyze_recent_logs(ai_client, &state, &event_tx).await;
             }
             _ = interval.tick() => {
                 state.uptime_secs = started.elapsed().as_secs();
                 state.tick();
+                if !startup_workflow_started && !ai_clients.is_empty() && state.uptime_secs > 2 {
+                    startup_workflow_started = true;
+                    let planner_id = next_agent_name();
+                    let task_desc = "Validate local Ollama readiness, inventory installed models, and produce an autonomous operations readiness plan";
+                    let _ = event_tx.send(OpsEvent::AgentSpawned {
+                        name: planner_id.clone(),
+                        role: AgentRole::Planner,
+                        timestamp: now_ts(),
+                    });
+                    let _ = event_tx.send(OpsEvent::TaskAssigned {
+                        agent: planner_id.clone(),
+                        task: task_desc.to_string(),
+                        timestamp: now_ts(),
+                    });
+                    let _ = event_tx.send(OpsEvent::NotificationRaised {
+                        level: "info".into(),
+                        message: "startup validation workflow scheduled".into(),
+                        timestamp: now_ts(),
+                    });
+                }
                 observability.process_metrics(&state, &event_tx);
                 step_dag_workflows(&mut dag_workflows, &state, &event_tx, &ai_clients, &mut pending_workflow_nodes).await;
                 let cpu = state.infra.first().map(|node| node.cpu).unwrap_or(0);
@@ -135,7 +157,7 @@ pub(crate) async fn ops_runtime(
                         tokio::spawn(run_infrastructure_command(id, command, dry_run, event_tx.clone()));
                     }
                     OpsEvent::AgentSpawned { name, role, timestamp } => {
-                        if let Some(client) = ai_clients.first() {
+                        if let Some(client) = client_for_role(&ai_clients, role) {
                             let client = client.clone();
                             let name = name.clone();
                             let role = role.clone();
@@ -151,7 +173,13 @@ pub(crate) async fn ops_runtime(
                             a.name == *agent && matches!(a.role, AgentRole::Planner)
                         });
                         let mem_ctx = agent_runtime.memory_context(agent);
-                        if let Some(client) = ai_clients.first() {
+                        let role = state
+                            .agents
+                            .iter()
+                            .find(|a| a.name == *agent)
+                            .map(|a| a.role.clone())
+                            .unwrap_or(AgentRole::Executor);
+                        if let Some(client) = client_for_role(&ai_clients, &role) {
                             if let Some(prev) = pending_tasks.insert(agent.clone(), task.clone()) {
                                 tracing::warn!(agent, prev_task = %prev, new_task = %task, "agent overwritten with new task");
                             }
@@ -244,27 +272,28 @@ pub(crate) async fn ops_runtime(
                         kind,
                         endpoint,
                         model,
-                        api_key,
                         timestamp,
+                        ..
                     } => {
-                        let config = crate::ai::AiProviderConfig {
-                            kind: match kind.as_str() {
-                                "ollama" => crate::ai::AiProviderKind::Ollama,
-                                "openrouter" => crate::ai::AiProviderKind::OpenRouter,
-                                _ => crate::ai::AiProviderKind::OpenAi,
-                            },
-                            endpoint: endpoint.clone(),
-                            model: model.clone(),
-                            api_key: api_key.clone(),
-                        };
-                        let client = AiClient::new(config);
-                        ai_clients.push(client);
-                        let _ = event_tx.send(OpsEvent::AiProviderRegistered {
-                            provider: kind.clone(),
-                            endpoint: endpoint.clone(),
-                            timestamp: timestamp.clone(),
-                        });
-                        tracing::info!(provider = %kind, "AI provider configured via /login");
+                        if kind == "ollama" {
+                            unsafe { std::env::set_var("OCTOBOT_OLLAMA_URL", endpoint); }
+                            if !model.is_empty() {
+                                unsafe { std::env::set_var("OCTOBOT_OLLAMA_MODEL", model); }
+                            }
+                            ai_clients = build_ai_clients();
+                            register_ollama_models(&event_tx, &ai_clients).await;
+                            let _ = event_tx.send(OpsEvent::NotificationRaised {
+                                level: "info".into(),
+                                message: "ollama endpoint reconfigured from login command".into(),
+                                timestamp: timestamp.clone(),
+                            });
+                        } else {
+                            let _ = event_tx.send(OpsEvent::NotificationRaised {
+                                level: "warn".into(),
+                                message: format!("ignored login attempt for unsupported provider `{kind}`"),
+                                timestamp: timestamp.clone(),
+                            });
+                        }
                     }
                     _ => {}
                 }
@@ -284,23 +313,105 @@ pub(crate) async fn ops_runtime(
 }
 
 fn build_ai_clients() -> Vec<AiClient> {
-    AiProviderConfig::configured_from_env()
+    default_agent_profiles()
         .into_iter()
         .map(AiClient::new)
         .collect()
 }
 
-fn register_configured_ai_providers(event_tx: &mpsc::UnboundedSender<OpsEvent>) {
-    for provider in AiProviderConfig::configured_from_env() {
-        let _ = event_tx.send(OpsEvent::AiProviderRegistered {
-            provider: provider.kind.as_str().into(),
-            endpoint: provider.endpoint,
+fn client_for_role<'a>(clients: &'a [AiClient], role: &AgentRole) -> Option<&'a AiClient> {
+    let desired = agent_kind_for_role(role);
+    clients
+        .iter()
+        .find(|client| client.profile().kind == desired)
+        .or_else(|| clients.first())
+}
+
+fn client_for_kind<'a>(clients: &'a [AiClient], kind: AgentKind) -> Option<&'a AiClient> {
+    clients
+        .iter()
+        .find(|client| client.profile().kind == kind)
+        .or_else(|| clients.first())
+}
+
+async fn register_ollama_models(
+    event_tx: &mpsc::UnboundedSender<OpsEvent>,
+    ai_clients: &[AiClient],
+) {
+    let Some(client) = ai_clients.first() else {
+        let _ = event_tx.send(OpsEvent::NotificationRaised {
+            level: "error".into(),
+            message: "no Ollama clients configured".into(),
             timestamp: now_ts(),
         });
+        return;
+    };
+
+    match client.health_check().await {
+        Ok(()) => {
+            let required: Vec<String> = ai_clients
+                .iter()
+                .map(|client| client.model().to_string())
+                .collect();
+            match client.required_model_health(&required).await {
+                Ok(models) => {
+                    let _ = event_tx.send(OpsEvent::ModelHealthUpdated {
+                        models: models
+                            .iter()
+                            .map(|model| crate::models::ModelHealthSnapshot {
+                                model: model.model.clone(),
+                                installed: model.installed,
+                                online: model.online,
+                                size_bytes: model.size_bytes,
+                                digest: model.digest.clone(),
+                                modified_at: model.modified_at.clone(),
+                                last_checked: model.last_checked.clone(),
+                                notes: model.notes.clone(),
+                            })
+                            .collect(),
+                        timestamp: now_ts(),
+                    });
+                    for model in models {
+                        let level = if model.installed { "info" } else { "warn" };
+                        let message = if model.installed {
+                            format!("ollama model available: {}", model.model)
+                        } else {
+                            format!("missing required Ollama model: {}", model.model)
+                        };
+                        let _ = event_tx.send(OpsEvent::NotificationRaised {
+                            level: level.into(),
+                            message,
+                            timestamp: now_ts(),
+                        });
+                    }
+                    let _ = event_tx.send(OpsEvent::NotificationRaised {
+                        level: "info".into(),
+                        message: format!("ollama runtime available at {}", client.endpoint()),
+                        timestamp: now_ts(),
+                    });
+                }
+                Err(error) => {
+                    let _ = event_tx.send(OpsEvent::NotificationRaised {
+                        level: "error".into(),
+                        message: format!("failed to query Ollama models: {error}"),
+                        timestamp: now_ts(),
+                    });
+                }
+            }
+        }
+        Err(error) => {
+            let _ = event_tx.send(OpsEvent::NotificationRaised {
+                level: "error".into(),
+                message: format!("Ollama health check failed: {error}"),
+                timestamp: now_ts(),
+            });
+        }
     }
 }
 
-fn load_configured_workflows(event_tx: &mpsc::UnboundedSender<OpsEvent>) -> Vec<DagWorkflowRuntime> {
+fn load_configured_workflows(
+    event_tx: &mpsc::UnboundedSender<OpsEvent>,
+) -> Vec<DagWorkflowRuntime> {
     let Ok(path) = std::env::var("OCTOBOT_WORKFLOW_DIR") else {
         return Vec::new();
     };
@@ -351,7 +462,10 @@ async fn spawn_ai_agent_task(
 
     let prompt = AgentPrompt {
         system: system_prompt,
-        user: format!("Agent {name} spawned with role {:?}. Report readiness.", role),
+        user: format!(
+            "Agent {name} spawned with role {:?}. Report readiness.",
+            role
+        ),
         tools: vec![ToolSpec {
             name: "report_readiness".into(),
             description: "Report that the agent is ready for task assignment".into(),
@@ -365,7 +479,18 @@ async fn spawn_ai_agent_task(
         }],
     };
 
-    match client.run_agent_turn(prompt).await {
+    match client
+        .chat(
+            vec![
+                serde_json::json!({ "role": "system", "content": prompt.system }),
+                serde_json::json!({ "role": "user", "content": prompt.user }),
+            ],
+            &prompt.tools,
+            &name,
+            Some(&event_tx),
+        )
+        .await
+    {
         Ok(response) => {
             let _ = event_tx.send(OpsEvent::ToolCallCompleted {
                 id: next_id("tool"),
@@ -460,16 +585,30 @@ async fn execute_ai_task(
             user: if history.is_empty() {
                 task.clone()
             } else {
-                format!("Continue execution. Previous tool results have been provided. Current turn {turn}/{max_turns}.")
+                format!(
+                    "Continue execution. Previous tool results have been provided. Current turn {turn}/{max_turns}."
+                )
             },
             tools: tools.clone(),
         };
         let tools_list = tools.clone();
 
         let response = if history.is_empty() {
-            client.run_agent_turn(prompt).await
+            client
+                .chat(
+                    vec![
+                        serde_json::json!({ "role": "system", "content": prompt.system }),
+                        serde_json::json!({ "role": "user", "content": prompt.user }),
+                    ],
+                    &tools_list,
+                    &agent,
+                    Some(&event_tx),
+                )
+                .await
         } else {
-            client.run_agent_turn_with_messages(messages, &tools_list).await
+            client
+                .chat(messages, &tools_list, &agent, Some(&event_tx))
+                .await
         };
 
         match response {
@@ -488,7 +627,9 @@ async fn execute_ai_task(
                     }));
 
                     if tc.name == "complete_task" {
-                        final_content = tc.arguments.get("summary")
+                        final_content = tc
+                            .arguments
+                            .get("summary")
                             .and_then(Value::as_str)
                             .unwrap_or("task completed")
                             .to_string();
@@ -564,11 +705,25 @@ async fn execute_ai_task(
             timestamp: now_ts(),
         });
         let _ = event_tx.send(OpsEvent::AgentLifecycleChanged {
-            agent,
-            status: crate::models::AgentStatus::Idle,
+            agent: agent.clone(),
+            status: crate::models::AgentStatus::Completed,
             task: "AI task completed after reasoning loop".into(),
             timestamp: now_ts(),
         });
+        unload_completed_task_model(&client, &agent, &event_tx).await;
+        // If this executor was assigned by a planner, report SubTaskCompleted
+        if let Some(planner_name) = task
+            .strip_prefix("[Planner: ")
+            .and_then(|s| s.split(']').next())
+        {
+            let _ = event_tx.send(OpsEvent::SubTaskCompleted {
+                planner: planner_name.to_string(),
+                executor: agent.clone(),
+                sub_task: task.clone(),
+                result: final_content.clone(),
+                timestamp: now_ts(),
+            });
+        }
     }
 }
 
@@ -587,9 +742,12 @@ async fn handle_planner_task(
         format!("\n\n{}", memory_ctx)
     };
     let system_prompt = format!(
-        "You are a planner agent named {agent}. Your job is to decompose the assigned task into a structured plan. \
-         For each sub-task, call the create_subtask tool with a clear description. \
-         When all sub-tasks are defined, call finalize_plan.{}",
+        "You are a planner agent named {agent}. Your ONLY job is to decompose the assigned task into 2-5 concrete sub-tasks. \
+         You MUST use the create_subtask tool for EACH sub-task. \
+         Example: for 'Investigate database CPU', create sub-tasks like 'Check database CPU metrics', \
+         'Analyze slow queries', 'Review connection pool usage', 'Check disk I/O'. \
+         After ALL sub-tasks are created, call finalize_plan. \
+         DO NOT respond with text alone — you MUST use the tools provided.{}",
         memory_section
     );
 
@@ -603,23 +761,25 @@ async fn handle_planner_task(
     let tools = vec![
         ToolSpec {
             name: "create_subtask".into(),
-            description: "Define a sub-task for an executor agent to work on".into(),
+            description: "Define ONE sub-task for an executor agent. Call this once per sub-task."
+                .into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "description": { "type": "string", "description": "the sub-task description" },
-                    "executor_name": { "type": "string", "description": "name for the executor agent" }
+                    "description": { "type": "string", "description": "clear description of this sub-task" },
+                    "executor_name": { "type": "string", "description": "short name for the executor agent" }
                 },
                 "required": ["description", "executor_name"]
             }),
         },
         ToolSpec {
             name: "finalize_plan".into(),
-            description: "Finalize the plan after all sub-tasks have been defined".into(),
+            description: "Call this ONLY after ALL sub-tasks have been defined via create_subtask"
+                .into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "summary": { "type": "string" }
+                    "summary": { "type": "string", "description": "plan summary" }
                 },
                 "required": ["summary"]
             }),
@@ -632,23 +792,39 @@ async fn handle_planner_task(
         .and_then(|v| v.parse().ok())
         .unwrap_or(5);
     let mut history: Vec<ToolCallResult> = Vec::new();
+    let mut plan_finalized = false;
 
     for turn in 0..max_turns {
+        if plan_finalized {
+            break;
+        }
         let messages = build_messages(&system_prompt, &task, &history);
         let prompt = AgentPrompt {
             system: system_prompt.clone(),
             user: if history.is_empty() {
-                format!("Decompose this task into sub-tasks: {task}")
+                format!("Decompose this task into sub-tasks using create_subtask: {task}")
             } else {
-                format!("Continue planning. Turn {turn}/{max_turns}.")
+                format!(
+                    "Continue creating sub-tasks. Turn {turn}/{max_turns}. Call create_subtask for each, then finalize_plan when done."
+                )
             },
             tools: tools.clone(),
         };
 
         let response = if history.is_empty() {
-            client.run_agent_turn(prompt).await
+            client
+                .chat(
+                    vec![
+                        serde_json::json!({ "role": "system", "content": prompt.system }),
+                        serde_json::json!({ "role": "user", "content": prompt.user }),
+                    ],
+                    &tools,
+                    &agent,
+                    Some(&event_tx),
+                )
+                .await
         } else {
-            client.run_agent_turn_with_messages(messages, &tools).await
+            client.chat(messages, &tools, &agent, Some(&event_tx)).await
         };
 
         match response {
@@ -658,12 +834,14 @@ async fn handle_planner_task(
                 }
                 for tc in &resp.tool_calls {
                     if tc.name == "create_subtask" {
-                        let desc = tc.arguments
+                        let desc = tc
+                            .arguments
                             .get("description")
                             .and_then(Value::as_str)
                             .unwrap_or("unnamed sub-task")
                             .to_string();
-                        let exec_name = tc.arguments
+                        let exec_name = tc
+                            .arguments
                             .get("executor_name")
                             .and_then(Value::as_str)
                             .map(|s| s.to_string())
@@ -675,6 +853,7 @@ async fn handle_planner_task(
                             success: true,
                         });
                     } else if tc.name == "finalize_plan" {
+                        plan_finalized = true;
                         break;
                     } else {
                         history.push(ToolCallResult {
@@ -689,6 +868,15 @@ async fn handle_planner_task(
                 tracing::warn!(%agent, turn, %error, "planner reasoning failed");
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
+        }
+    }
+
+    // Fallback: if planner created no sub-tasks, auto-generate them from the task
+    if sub_tasks.is_empty() {
+        tracing::info!(%agent, task = %task, "planner created no sub-tasks, generating fallback sub-tasks");
+        let fallback_subtasks = generate_fallback_subtasks(&task, &agent);
+        for (desc, exec_name) in &fallback_subtasks {
+            sub_tasks.push((desc.clone(), exec_name.clone()));
         }
     }
 
@@ -742,11 +930,158 @@ async fn handle_planner_task(
         timestamp: now_ts(),
     });
     let _ = event_tx.send(OpsEvent::AgentLifecycleChanged {
-        agent,
-        status: crate::models::AgentStatus::Idle,
+        agent: agent.clone(),
+        status: crate::models::AgentStatus::Completed,
         task: format!("Plan completed with {} sub-tasks", sub_tasks.len()),
         timestamp: now_ts(),
     });
+    unload_completed_task_model(&client, &agent, &event_tx).await;
+}
+
+async fn unload_completed_task_model(
+    client: &AiClient,
+    agent: &str,
+    event_tx: &mpsc::UnboundedSender<OpsEvent>,
+) {
+    let model = client.model().to_string();
+    match client.unload_model().await {
+        Ok(()) => {
+            let _ = event_tx.send(OpsEvent::NotificationRaised {
+                level: "info".into(),
+                message: format!("unloaded Ollama model {model} after completed task for {agent}"),
+                timestamp: now_ts(),
+            });
+        }
+        Err(error) => {
+            tracing::warn!(%agent, %model, %error, "failed to unload completed task model");
+            let _ = event_tx.send(OpsEvent::NotificationRaised {
+                level: "warn".into(),
+                message: format!("failed to unload Ollama model {model} for {agent}: {error}"),
+                timestamp: now_ts(),
+            });
+        }
+    }
+}
+
+fn generate_fallback_subtasks(task: &str, agent: &str) -> Vec<(String, String)> {
+    let task_lower = task.to_lowercase();
+    let mut sub_tasks: Vec<(String, String)> = Vec::new();
+
+    if task_lower.contains("database")
+        || task_lower.contains("db")
+        || task_lower.contains("postgres")
+    {
+        sub_tasks.push((
+            "Check database CPU and connection metrics".into(),
+            format!("{}-db-cpu", agent),
+        ));
+        sub_tasks.push((
+            "Analyze slow queries and lock contention".into(),
+            format!("{}-db-queries", agent),
+        ));
+        sub_tasks.push((
+            "Review disk I/O and storage capacity".into(),
+            format!("{}-db-disk", agent),
+        ));
+        sub_tasks.push((
+            "Check replication lag and WAL status".into(),
+            format!("{}-db-repl", agent),
+        ));
+    } else if task_lower.contains("nginx")
+        || task_lower.contains("ingress")
+        || task_lower.contains("gateway")
+    {
+        sub_tasks.push((
+            "Check nginx connection pool and TLS handshakes".into(),
+            format!("{}-nginx-conn", agent),
+        ));
+        sub_tasks.push((
+            "Review recent configuration and rollout changes".into(),
+            format!("{}-nginx-config", agent),
+        ));
+        sub_tasks.push((
+            "Analyze request latency percentiles".into(),
+            format!("{}-nginx-latency", agent),
+        ));
+        sub_tasks.push((
+            "Inspect upstream health and error rates".into(),
+            format!("{}-nginx-upstream", agent),
+        ));
+    } else if task_lower.contains("auth")
+        || task_lower.contains("token")
+        || task_lower.contains("cache")
+    {
+        sub_tasks.push((
+            "Check auth service latency and error rates".into(),
+            format!("{}-auth-latency", agent),
+        ));
+        sub_tasks.push((
+            "Analyze token cache hit ratios and saturation".into(),
+            format!("{}-auth-cache", agent),
+        ));
+        sub_tasks.push((
+            "Review recent auth service deployments".into(),
+            format!("{}-auth-deploy", agent),
+        ));
+        sub_tasks.push((
+            "Check auth service CPU and memory usage".into(),
+            format!("{}-auth-resources", agent),
+        ));
+    } else if task_lower.contains("disk")
+        || task_lower.contains("storage")
+        || task_lower.contains("space")
+    {
+        sub_tasks.push((
+            "Check disk usage across all mount points".into(),
+            format!("{}-disk-usage", agent),
+        ));
+        sub_tasks.push((
+            "Identify large files and directories".into(),
+            format!("{}-disk-large", agent),
+        ));
+        sub_tasks.push((
+            "Check inode usage and filesystem health".into(),
+            format!("{}-disk-inode", agent),
+        ));
+    } else if task_lower.contains("payment")
+        || task_lower.contains("checkout")
+        || task_lower.contains("503")
+    {
+        sub_tasks.push((
+            "Check payment service health and error logs".into(),
+            format!("{}-payment-health", agent),
+        ));
+        sub_tasks.push((
+            "Analyze payment service recent deployments".into(),
+            format!("{}-payment-deploy", agent),
+        ));
+        sub_tasks.push((
+            "Review downstream dependency status for payment".into(),
+            format!("{}-payment-deps", agent),
+        ));
+        sub_tasks.push((
+            "Inspect payment service resource usage".into(),
+            format!("{}-payment-resources", agent),
+        ));
+    } else {
+        sub_tasks.push((
+            "Analyze system metrics and resource usage".into(),
+            format!("{}-metrics", agent),
+        ));
+        sub_tasks.push((
+            "Review recent changes and deployments".into(),
+            format!("{}-changes", agent),
+        ));
+        sub_tasks.push((
+            "Check error logs and recent anomalies".into(),
+            format!("{}-errors", agent),
+        ));
+        sub_tasks.push((
+            "Summarize findings and recommend actions".into(),
+            format!("{}-summary", agent),
+        ));
+    }
+    sub_tasks
 }
 
 async fn execute_ai_tool(
@@ -1004,7 +1339,9 @@ async fn step_dag_workflows(
                             status: RecoveryStatus::AwaitingApproval,
                             risk: "approval checkpoint in automated workflow".into(),
                             requires_role: UserRole::Operator,
-                            evidence: vec![format!("DAG workflow {wf_id} requires approval at node {node_id}")],
+                            evidence: vec![format!(
+                                "DAG workflow {wf_id} requires approval at node {node_id}"
+                            )],
                             requested_by: "dag-workflow-engine".into(),
                             approved_by: None,
                             dry_run_only: true,
@@ -1019,10 +1356,14 @@ async fn step_dag_workflows(
                 }
                 WorkflowNodeKind::Condition => {
                     // Evaluate condition against state
-                    let condition_met = node.condition.as_ref().map(|cond| {
-                        let context = build_condition_context(state);
-                        wf.evaluate_condition(cond, &context)
-                    }).unwrap_or(true);
+                    let condition_met = node
+                        .condition
+                        .as_ref()
+                        .map(|cond| {
+                            let context = build_condition_context(state);
+                            wf.evaluate_condition(cond, &context)
+                        })
+                        .unwrap_or(true);
 
                     if condition_met {
                         let _ = wf.mark_succeeded(&node_id);
@@ -1234,7 +1575,7 @@ async fn run_infrastructure_command(
 
 pub(crate) async fn run_live_log_stream(event_tx: mpsc::UnboundedSender<OpsEvent>) {
     let id = "live-journalctl".to_string();
-    let command = "journalctl -f -n 0 --no-pager".to_string();
+    let command = "journalctl -f -n 20 --no-pager".to_string();
     let _ = event_tx.send(OpsEvent::CommandRequested {
         id: id.clone(),
         command: command.clone(),
@@ -1244,7 +1585,7 @@ pub(crate) async fn run_live_log_stream(event_tx: mpsc::UnboundedSender<OpsEvent
     });
 
     let mut child = match Command::new("journalctl")
-        .args(["-f", "-n", "0", "--no-pager"])
+        .args(["-f", "-n", "20", "--no-pager"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

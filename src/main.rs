@@ -11,8 +11,8 @@ mod persistence;
 mod plugins;
 mod remediation;
 mod reports;
-mod trace;
 mod runtime;
+mod trace;
 mod ui;
 mod utils;
 mod workflows;
@@ -41,7 +41,9 @@ fn load_dotenv() {
             let k = key.trim();
             let v = value.trim().trim_matches(&['"', '\''][..]);
             if !k.is_empty() && !std::env::var(k).is_ok() {
-                unsafe { std::env::set_var(k, v); }
+                unsafe {
+                    std::env::set_var(k, v);
+                }
             }
         }
     }

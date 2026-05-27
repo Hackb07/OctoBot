@@ -1,5 +1,7 @@
 # OctoBot — Deployment & Task Reference
 
+This reference covers production-style setup and optional backends. For hands-on feature examples and use-case recipes, see [User Guide](user-guide.md). For a short first run, see [Quickstart Guide](quickstart.md).
+
 ## Prerequisites
 
 | Requirement | Minimum | Recommended |
@@ -35,7 +37,7 @@ That's it. OctoBot runs immediately with zero configuration — all optional fea
 - [ ] `git clone https://github.com/your-org/OctoBot.git`
 - [ ] `cd OctoBot`
 - [ ] `cargo build --release` (first build: ~3 min)
-- [ ] `cargo test` — verify 25 tests pass
+- [ ] `cargo test` — verify 27 tests pass
 - [ ] `cargo check` — verify zero compilation errors
 
 ### 3. Run Without Any Backend
@@ -44,7 +46,7 @@ That's it. OctoBot runs immediately with zero configuration — all optional fea
 ./target/release/OctoBot
 ```
 
-Press **`?`** to see the help overlay. All dashboards are pre-seeded with sample data for demonstration.
+Press **`?`** to see the help overlay. OctoBot starts with empty runtime state and populates views from real commands, events, workflows, integrations, and user actions.
 
 ### 4. Optional Backends
 
@@ -68,12 +70,14 @@ Each backend is independently optional. OctoBot runs without any of them.
 - [ ] Set env: `export OCTOBOT_EMBEDDING_URL=http://localhost:1234/embed`
 - [ ] Verify: Qdrant collection auto-created on first event
 
-**AI provider** (agent reasoning):
+**Ollama** (local AI agent reasoning):
 
-- [ ] **OpenAI**: `export OCTOBOT_OPENAI_API_KEY=sk-...`
-- [ ] **OpenRouter**: `export OCTOBOT_OPENROUTER_API_KEY=sk-...`
-- [ ] **Ollama** (local): `export OCTOBOT_OLLAMA_URL=http://localhost:11434`
-- [ ] Or set any at runtime with `/login openrouter <key>` in the TUI
+- [ ] Install Ollama and start the server.
+- [ ] Pull models: `ollama pull llama3.1:8b`, `ollama pull qwen2.5-coder:7b`, `ollama pull deepseek-r1:8b`, `ollama pull phi4`
+- [ ] Set env: `export OCTOBOT_OLLAMA_URL=http://localhost:11434`
+- [ ] Optional model override: `export OCTOBOT_OLLAMA_MODEL=llama3.1:8b`
+- [ ] Or configure at runtime with `/login ollama http://localhost:11434`
+- [ ] Verify: completed agent tasks show `Completed`; OctoBot unloads the completed task model with `keep_alive=0`
 
 **Prometheus** (metrics):
 
@@ -101,13 +105,9 @@ Each backend is independently optional. OctoBot runs without any of them.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `OCTOBOT_OPENAI_API_KEY` | OpenAI API key | — |
-| `OCTOBOT_OPENAI_MODEL` | OpenAI model | `gpt-4.1-mini` |
-| `OCTOBOT_OPENAI_BASE_URL` | OpenAI endpoint | `https://api.openai.com/v1/chat/completions` |
-| `OCTOBOT_OLLAMA_URL` | Ollama server URL | — |
-| `OCTOBOT_OLLAMA_MODEL` | Ollama model | `llama3.1` |
-| `OCTOBOT_OPENROUTER_API_KEY` | OpenRouter API key | — |
-| `OCTOBOT_OPENROUTER_MODEL` | OpenRouter model | `openrouter/free` |
+| `OCTOBOT_OLLAMA_URL` | Ollama server URL | `http://localhost:11434` |
+| `OCTOBOT_OLLAMA_MODEL` | Ollama model for runtime login path | `llama3.1:8b` |
+| `OCTOBOT_OLLAMA_RETRIES` | Ollama request retry count | `2` |
 | `OCTOBOT_DATABASE_URL` | PostgreSQL connection | — |
 | `OCTOBOT_QDRANT_URL` | Qdrant vector DB URL | — |
 | `OCTOBOT_QDRANT_COLLECTION` | Qdrant collection name | `octobot_operational_memory` |
@@ -129,13 +129,15 @@ Each backend is independently optional. OctoBot runs without any of them.
 
 ### 6. Verify Everything Works
 
-- [ ] `cargo test` → 25 passed
+- [ ] `cargo test` → 27 passed
 - [ ] `cargo check` → zero errors (warnings are expected for unused pub items)
 - [ ] Launch with `./target/release/OctoBot` → TUI shows dashboard
 - [ ] Press `?` → help overlay appears
 - [ ] `/exec uptime` → command runs
 - [ ] `/investigate nginx_latency` → incident created
-- [ ] `/spawn-agent research` → agent registered
+- [ ] `/spawn-agent research` → agent registered and task assigned
+- [ ] `/multi-agent Assess Ollama readiness and report findings` → planner/executor flow starts
+- [ ] `/tasks-report` → task lifecycle report appears in Reports
 - [ ] `/replay start` then `/replay step` → timeline advances
 - [ ] `curl http://localhost:7878/health` → API online
 
@@ -185,9 +187,7 @@ Each backend is independently optional. OctoBot runs without any of them.
 | `/plugin add <name> <kind>` | Registers a new plugin (kind: tool/workflow/integration/agent) |
 | `/plugin enable <name>` | Enables a registered plugin |
 | `/plugin disable <name>` | Disables a plugin |
-| `/plugin remove <name>` | Unregisters a plugin entirely |
-| `/plugin list` | Lists all plugins with status |
-| `/plugin reload` | Hot-reloads plugins from `OCTOBOT_PLUGIN_DIR` |
+| `OCTOBOT_PLUGIN_DIR=... cargo run` | Loads plugin manifests from a directory at startup |
 
 Example:
 ```
@@ -195,13 +195,11 @@ Example:
 /plugin enable runbook-search
 ```
 
-### AI Provider Login
+### Ollama Login
 
 | Command | What It Does |
 |---------|-------------|
-| `/login openai <api_key>` | Authenticates with OpenAI (env fallback: `OCTOBOT_OPENAI_API_KEY`) |
 | `/login ollama <url>` | Connects to local Ollama (env fallback: `OCTOBOT_OLLAMA_URL`) |
-| `/login openrouter <api_key>` | Authenticates with OpenRouter (env fallback: `OCTOBOT_OPENROUTER_API_KEY`) |
 
 ### Replay & Audit
 
@@ -346,7 +344,7 @@ PostgreSQL and Qdrant are optional — everything works without them.
 |---------|-------|-----|
 | Blank TUI / garbage characters | Terminal too small | Resize to ≥120×30 |
 | TUI shows no logs | systemd-journal group not set | `sudo usermod -aG systemd-journal $USER && newgrp systemd-journal` |
-| AI commands return empty | No AI provider configured | `/login openrouter <key>` or set env var |
+| AI commands return empty | Ollama is not configured or unavailable | Start Ollama and run `/login ollama http://localhost:11434` |
 | PostgreSQL not connecting | DB not running or wrong URL | Check `OCTOBOT_DATABASE_URL`, run `docker start pg` |
 | Qdrant not connecting | Qdrant not running | Run `docker start qdrant` |
 | `/exec uptime` returns nothing | Command timeout (>8s) or not allowlisted | Check command is in allowlist (`docker ps`, `kubectl get pods`, `journalctl`, `systemctl`, `ps aux`, `df -h`, `uptime`, `ssh`) |
