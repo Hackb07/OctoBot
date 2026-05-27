@@ -319,6 +319,62 @@ flowchart TD
 - [x] **Plugin registry API** — `PluginApi::handle_command()` processes `plugin add|enable|disable|remove|list|reload` commands (`src/plugin_registry.rs:190‑259`)
 - [x] **SDK documentation** — `manifest_doc()` returns JSON schema + status lifecycle documentation (`src/plugin_host.rs:193‑213`)
 
+### Phase 10 — Advanced Security Hardening
+
+- [ ] **Zero-trust runtime security** — per-agent permission isolation, capability-based access control, isolated execution contexts, sandbox boundaries, memory isolation, and command execution permission tiers.
+- [ ] **Secure command execution** — strict command allowlists, dangerous shell-pattern denial, shell injection blocking, input sanitization, argument validation, execution timeouts, process resource limits, seccomp restrictions, and chroot/container isolation where available.
+- [ ] **AI prompt injection protection** — detection and blocking for prompt injection, jailbreaks, recursive agent manipulation, tool hijacking, hidden instructions, memory poisoning, and malicious workflow definitions.
+- [ ] **Prompt and tool policy layer** — prompt sanitization, instruction filtering, AI output validation, tool-call verification, and policy-based response filtering.
+- [ ] **Plugin security system** — signed manifests, permission scopes, sandboxing, filesystem restrictions, network restrictions, execution quotas, integrity validation, and malicious plugin detection.
+- [ ] **Authentication and authorization** — secure local authentication, RBAC permissions, session expiration, encrypted local credentials, audit logging, MFA-ready architecture, API token management, and secure admin approval flows.
+
+### Phase 11 — Vulnerability Detection & Self-Protection
+
+- [ ] **Built-in vulnerability scanner** — detect unsafe shell execution, insecure Rust patterns, exposed secrets, weak permissions, unsafe plugin behavior, dependency vulnerabilities, SQL injection, command injection, insecure deserialization, path traversal, unsafe async patterns, and race conditions.
+- [ ] **Automatic security auditing** — periodic self-audits, configuration audits, dependency checks, workflow validation, plugin behavior audits, runtime permission audits, memory leak detection, and unsafe API exposure checks.
+- [ ] **Threat detection engine** — detect abnormal agent behavior, suspicious workflows, privilege escalation attempts, repeated failed commands, prompt manipulation, infinite loops, suspicious plugin activity, and resource exhaustion attacks.
+- [ ] **AI-powered security analysis** — use local `deepseek-r1:8b` for vulnerability reasoning, threat analysis, attack-path detection, recommendations, exploitability scoring, and root-cause analysis.
+
+### Phase 12 — Runtime Stability & Reliability
+
+- [ ] **Memory protection** — memory leak detection, automatic cleanup, model memory monitoring, stale workflow cleanup, resource lifecycle tracking, and runaway task prevention.
+- [ ] **Fault tolerance** — crash recovery, workflow checkpointing, persistent recovery state, automatic restart handling, corrupted state protection, and safe rollback recovery.
+- [ ] **Rate limiting and abuse prevention** — protect command execution, workflow creation, AI requests, agent loops, plugin execution, and memory use from flooding or exhaustion.
+- [ ] **Secure logging** — tamper-resistant logs, sensitive data redaction, encrypted audit trails, structured security logs, and attack event timelines.
+
+### Phase 13 — Advanced Observability & Security UI
+
+- [ ] **Security dashboard** — active threats, suspicious activity, blocked attacks, runtime integrity, permission violations, and vulnerability alerts.
+- [ ] **Live security panels** — AI reasoning trace, command execution audit, plugin security monitor, resource protection status, and runtime sandbox monitor.
+- [ ] **Attack visualization** — threat timelines, vulnerability explorer, workflow risk analysis, and security event replay.
+
+### Phase 14 — Security Tooling
+
+- [ ] **Dependency vulnerability scanner** — inspect local dependency metadata and flag vulnerable packages for offline review.
+- [ ] **Local port scanner** — inventory listening local services and identify risky exposed ports.
+- [ ] **Configuration analyzer** — validate OctoBot, runtime, workflow, plugin, and infrastructure configuration for insecure settings.
+- [ ] **Log anomaly detector** — identify suspicious patterns, repeated failures, and abnormal security events in local logs.
+- [ ] **Plugin behavior analyzer** — inspect plugin manifests, scripts, permissions, and runtime behavior for unsafe actions.
+- [ ] **Workflow validator** — detect unsafe workflow definitions, risky commands, cyclic dependencies, missing approvals, and rollback gaps.
+- [ ] **Sandbox inspector** — report active runtime boundaries, execution policies, filesystem access, network access, and resource limits.
+
+### Phase 15 — Local AI Security Runtime
+
+- [ ] **Local-only Ollama runtime** — enforce offline local inference through `http://localhost:11434` with no cloud APIs or external AI providers.
+- [ ] **Dedicated local agent models** — coding agent `qwen2.5-coder:7b`, planning agent `llama3.1:8b`, security reasoning agent `deepseek-r1:8b`, and fast utility agent `phi4`.
+- [ ] **Dynamic model switching** — route agent tasks to the correct local model with streaming responses and model health validation.
+- [ ] **Offline capability guarantees** — keep all planning, coding, security reasoning, utility tasks, embeddings, memory, and workflows functional without external network dependencies where configured locally.
+
+### Phase 16 — Production-Grade Architecture
+
+- [ ] **Modular security layer** — central policy enforcement for agents, commands, plugins, workflows, memory, persistence, API access, and event handling.
+- [ ] **Hardened event bus** — validate event producers, event schemas, security-sensitive transitions, and replay integrity.
+- [ ] **Secure workflow runtime** — enforce workflow risk scoring, approvals, command policy gates, rollback controls, and malicious definition detection.
+- [ ] **Isolated plugin runtime** — enforce signed manifests, scoped permissions, filesystem/network boundaries, quotas, and integrity checks.
+- [ ] **Encrypted persistence and memory** — protect audit logs, credentials, recovery state, vector memory, and sensitive operational context at rest.
+- [ ] **Resilient async runtime** — lifecycle tracking, cancellation safety, task supervision, backpressure, loop prevention, and resource cleanup.
+- [ ] **Defense-in-depth controls** — layered protections, self-healing security controls, autonomous threat response, and runtime integrity verification.
+
 ## Development
 
 ```bash
