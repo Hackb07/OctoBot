@@ -16,9 +16,9 @@ use tokio::{
 use crate::{
     constants::{COMMAND_SUGGESTIONS, NAV_ITEMS},
     models::{
-        AgentRole, AgentRuntime, AgentRuntimeKind, AgentStatus, KnowledgeEdge, OpsEvent, OpsState,
-        PluginDescriptor, PluginKind, PluginStatus, RecoveryAction, RecoveryStatus, RuntimeStatus,
-        UserRole,
+        AgentRole, AgentRuntime, AgentRuntimeKind, AgentStatus, ExecutionRecord, KnowledgeEdge,
+        OpsEvent, OpsState, PluginDescriptor, PluginKind, PluginStatus, RecoveryAction,
+        RecoveryStatus, RuntimeStatus, UserRole,
     },
     reports::write_report_json,
     utils::{next_agent_name, next_id, now_ts},
@@ -856,47 +856,199 @@ impl App {
     }
 
     fn draw_settings(&self, frame: &mut Frame, area: Rect) {
-        let tabs = Tabs::new(["Ollama", "Models", "Tokens", "Reasoning", "Notifications"])
+        let tabs = Tabs::new(["Security", "Ollama", "Plugins", "Sandbox", "Replay"])
             .block(Block::new().borders(Borders::BOTTOM))
             .highlight_style(Style::default().fg(Color::Cyan));
         let chunks = Layout::vertical([
             Constraint::Length(3),
-            Constraint::Percentage(54),
-            Constraint::Percentage(46),
+            Constraint::Percentage(24),
+            Constraint::Percentage(38),
+            Constraint::Percentage(38),
         ])
         .split(area);
         frame.render_widget(tabs, chunks[0]);
 
-        let middle = Layout::horizontal([Constraint::Percentage(58), Constraint::Percentage(42)])
-            .split(chunks[1]);
+        self.draw_security_dashboard(frame, chunks[1]);
+
+        let middle = Layout::horizontal([
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
+        ])
+        .split(chunks[2]);
+        self.draw_security_audit_panel(frame, middle[0]);
+        self.draw_plugin_security_panel(frame, middle[1]);
+        self.draw_runtime_protection_panel(frame, middle[2]);
+
+        let bottom = Layout::horizontal([
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
+        ])
+        .split(chunks[3]);
+        self.draw_attack_timeline(frame, bottom[0]);
+        self.draw_vulnerability_explorer(frame, bottom[1]);
+        self.draw_security_replay_panel(frame, bottom[2]);
+    }
+
+    fn draw_security_dashboard(&self, frame: &mut Frame, area: Rect) {
+        let summary = SecurityUiSummary::from_state(&self.state);
+        let cards = Layout::horizontal([
+            Constraint::Percentage(17),
+            Constraint::Percentage(17),
+            Constraint::Percentage(17),
+            Constraint::Percentage(17),
+            Constraint::Percentage(16),
+            Constraint::Percentage(16),
+        ])
+        .split(area);
+
+        self.draw_count_card(
+            frame,
+            cards[0],
+            "Threats",
+            summary.active_threats,
+            threat_color(summary.active_threats),
+        );
+        self.draw_count_card(
+            frame,
+            cards[1],
+            "Suspicious",
+            summary.suspicious_activity,
+            threat_color(summary.suspicious_activity),
+        );
+        self.draw_count_card(
+            frame,
+            cards[2],
+            "Blocked",
+            summary.blocked_attacks,
+            if summary.blocked_attacks == 0 {
+                Color::DarkGray
+            } else {
+                Color::Yellow
+            },
+        );
+        self.draw_count_card(
+            frame,
+            cards[3],
+            "Violations",
+            summary.permission_violations,
+            threat_color(summary.permission_violations),
+        );
+        self.draw_count_card(
+            frame,
+            cards[4],
+            "Vulns",
+            summary.vulnerability_alerts,
+            threat_color(summary.vulnerability_alerts),
+        );
+        frame.render_widget(
+            Gauge::default()
+                .block(Block::bordered().title(" Integrity "))
+                .gauge_style(
+                    Style::default()
+                        .fg(health_color(summary.runtime_integrity))
+                        .bg(Color::Black),
+                )
+                .percent(summary.runtime_integrity as u16)
+                .label(format!("{}%", summary.runtime_integrity)),
+            cards[5],
+        );
+    }
+
+    fn draw_count_card(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        title: &str,
+        value: usize,
+        color: Color,
+    ) {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(format!("{value}")).alignment(Alignment::Center),
+                Line::from(title).alignment(Alignment::Center),
+            ])
+            .style(Style::default().fg(color).add_modifier(Modifier::BOLD))
+            .block(Block::bordered()),
+            area,
+        );
+    }
+
+    fn draw_security_audit_panel(&self, frame: &mut Frame, area: Rect) {
+        let rows = self.state.executions.iter().rev().take(7).map(|record| {
+            let status_style = if is_blocked_execution(record) {
+                Style::default().fg(Color::Yellow)
+            } else if record.status == "failed" {
+                Style::default().fg(Color::Red)
+            } else {
+                Style::default().fg(Color::Green)
+            };
+            Row::new(vec![
+                record.id.clone(),
+                record.status.clone(),
+                record.command.clone(),
+                record.output_preview.clone(),
+            ])
+            .style(status_style)
+        });
+        frame.render_widget(
+            Table::new(
+                rows,
+                [
+                    Constraint::Length(13),
+                    Constraint::Length(10),
+                    Constraint::Min(18),
+                    Constraint::Min(18),
+                ],
+            )
+            .header(
+                Row::new(["id", "status", "command audit", "policy output"])
+                    .style(Style::default().fg(Color::Cyan)),
+            )
+            .block(Block::bordered().title(" Command Security Audit ")),
+            area,
+        );
+    }
+
+    fn draw_plugin_security_panel(&self, frame: &mut Frame, area: Rect) {
         let plugin_rows = self.state.plugins.iter().map(|plugin| {
+            let risk = plugin_security_risk(plugin);
             Row::new(vec![
                 plugin.name.clone(),
                 format!("{:?}", plugin.kind),
                 format!("{:?}", plugin.status),
-                plugin.version.clone(),
+                risk,
             ])
         });
         frame.render_widget(
             Table::new(
                 plugin_rows,
                 [
-                    Constraint::Length(22),
-                    Constraint::Length(14),
+                    Constraint::Length(18),
                     Constraint::Length(12),
-                    Constraint::Length(8),
+                    Constraint::Length(12),
+                    Constraint::Min(12),
                 ],
             )
             .header(
-                Row::new(["plugin", "kind", "status", "ver"])
+                Row::new(["plugin", "kind", "status", "security"])
                     .style(Style::default().fg(Color::Cyan)),
             )
-            .block(Block::bordered().title(" Plugin Registry ")),
-            middle[0],
+            .block(Block::bordered().title(" Plugin Security Monitor ")),
+            area,
         );
+    }
 
+    fn draw_runtime_protection_panel(&self, frame: &mut Frame, area: Rect) {
+        let summary = SecurityUiSummary::from_state(&self.state);
         frame.render_widget(
             Paragraph::new(vec![
+                Line::from(format!(
+                    "resource protection: memory pressure {}%",
+                    estimated_memory_pressure(&self.state)
+                )),
+                Line::from(format!("runtime integrity: {}%", summary.runtime_integrity)),
                 Line::from(format!(
                     "Ollama endpoint: {}",
                     std::env::var("OCTOBOT_OLLAMA_URL")
@@ -918,6 +1070,180 @@ impl App {
                     self.state.reasoning_stream.len()
                 )),
                 Line::from(format!("Notifications: {}", self.state.notifications.len())),
+                Line::from(format!("sandbox: {}", self.state.sandbox_policy.mode)),
+                Line::from(format!(
+                    "approval roles: {:?}",
+                    self.state.sandbox_policy.approved_roles
+                )),
+                Line::from(format!(
+                    "review targets: {}",
+                    self.state.sandbox_policy.review_required_for.join(", ")
+                )),
+                Line::from(format!(
+                    "blocked attacks: {} | violations: {}",
+                    summary.blocked_attacks, summary.permission_violations
+                )),
+                Line::from(format!("current role: {:?}", self.state.current_role)),
+            ])
+            .block(Block::bordered().title(" Resource & Sandbox Protection "))
+            .wrap(Wrap { trim: true }),
+            area,
+        );
+    }
+
+    fn draw_attack_timeline(&self, frame: &mut Frame, area: Rect) {
+        let rows = self
+            .state
+            .explainability
+            .iter()
+            .rev()
+            .filter(|record| is_security_record(&record.action) || is_security_record(&record.why))
+            .take(7)
+            .map(|record| {
+                Row::new(vec![
+                    short_time(&record.timestamp),
+                    record.action.clone(),
+                    format!("{}%", record.confidence),
+                    record.evidence.join("; "),
+                ])
+            });
+        frame.render_widget(
+            Table::new(
+                rows,
+                [
+                    Constraint::Length(9),
+                    Constraint::Min(18),
+                    Constraint::Length(7),
+                    Constraint::Min(18),
+                ],
+            )
+            .header(
+                Row::new(["time", "threat event", "score", "evidence"])
+                    .style(Style::default().fg(Color::Cyan)),
+            )
+            .block(Block::bordered().title(" Threat Timeline ")),
+            area,
+        );
+    }
+
+    fn draw_vulnerability_explorer(&self, frame: &mut Frame, area: Rect) {
+        let mut lines = vec![
+            Line::from(format!(
+                "alerts: {}",
+                SecurityUiSummary::from_state(&self.state).vulnerability_alerts
+            ))
+            .fg(Color::Cyan),
+            Line::from(format!(
+                "workflow risk: {} pending approvals",
+                self.state
+                    .recovery_actions
+                    .iter()
+                    .filter(|action| action.status == RecoveryStatus::AwaitingApproval)
+                    .count()
+            )),
+            Line::from(""),
+        ];
+        lines.extend(
+            self.state
+                .explainability
+                .iter()
+                .rev()
+                .filter(|record| {
+                    is_security_record(&record.action) || is_security_record(&record.why)
+                })
+                .take(5)
+                .map(|record| {
+                    Line::from(format!(
+                        "- {} | {}% | {}",
+                        record.action,
+                        record.confidence,
+                        record.evidence.join("; ")
+                    ))
+                }),
+        );
+        lines.push(Line::from(""));
+        lines.extend(
+            self.state
+                .recovery_actions
+                .iter()
+                .rev()
+                .take(4)
+                .map(|action| {
+                    Line::from(format!(
+                        "- workflow risk {}: {:?} {}",
+                        action.id, action.status, action.risk
+                    ))
+                }),
+        );
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(Block::bordered().title(" Vulnerability & Workflow Risk "))
+                .wrap(Wrap { trim: true }),
+            area,
+        );
+    }
+
+    fn draw_security_replay_panel(&self, frame: &mut Frame, area: Rect) {
+        let replay_status = if self.state.replay.active {
+            format!(
+                "replay {}/{}",
+                self.state.replay.position, self.state.replay.total
+            )
+        } else {
+            "replay idle".into()
+        };
+        let mut lines = vec![
+            Line::from(replay_status).fg(Color::Cyan),
+            Line::from(format!(
+                "last: {}",
+                self.state
+                    .replay
+                    .last_event
+                    .clone()
+                    .unwrap_or_else(|| "-".into())
+            )),
+            Line::from(""),
+            Line::from("security event replay:").fg(Color::Cyan),
+        ];
+        lines.extend(
+            self.state
+                .events
+                .iter()
+                .rev()
+                .filter(|event| is_security_event(event))
+                .take(6)
+                .map(|event| {
+                    Line::from(format!(
+                        "- {} {}",
+                        short_time(event_timestamp(event)),
+                        event_type_tag(event)
+                    ))
+                }),
+        );
+        lines.push(Line::from(""));
+        lines.push(Line::from(format!(
+            "reasoning trace entries: {}",
+            self.state.reasoning_stream.len()
+        )));
+        lines.extend(
+            self.state
+                .reasoning_stream
+                .iter()
+                .rev()
+                .take(3)
+                .map(|entry| Line::from(format!("- {entry}"))),
+        );
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(Block::bordered().title(" Security Replay & AI Trace "))
+                .wrap(Wrap { trim: true }),
+            area,
+        );
+    }
+
+    fn draw_legacy_settings_summary(&self, frame: &mut Frame, area: Rect) {
+        frame.render_widget(
+            Paragraph::new(vec![
                 Line::from(format!(
                     "Sandbox policy: {} | roles {:?} | review targets {}",
                     self.state.sandbox_policy.mode,
@@ -943,38 +1269,7 @@ impl App {
             ])
             .block(Block::bordered().title(" Integration Settings "))
             .wrap(Wrap { trim: true }),
-            middle[1],
-        );
-
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(format!(
-                    "Distributed runtime coverage: {}",
-                    self.state
-                        .runtimes
-                        .iter()
-                        .map(|runtime| format!("{}={:?}", runtime.agent, runtime.kind))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )),
-                Line::from(format!(
-                    "Knowledge links: {}",
-                    self.state
-                        .knowledge_edges
-                        .iter()
-                        .rev()
-                        .take(5)
-                        .map(|edge| format!("{} {} {}", edge.from, edge.relation, edge.to))
-                        .collect::<Vec<_>>()
-                        .join(" | ")
-                )),
-                Line::from(format!(
-                    "Completed local features: sandbox policy, plugin registry, distributed runtime tracking, research confidence, knowledge graph"
-                )),
-            ])
-            .block(Block::bordered().title(" Platform Completion "))
-            .wrap(Wrap { trim: true }),
-            chunks[2],
+            area,
         );
     }
 
@@ -1550,6 +1845,197 @@ fn event_type_tag(event: &OpsEvent) -> &'static str {
         OpsEvent::ReplayStarted { .. } => "ReplayStart",
         OpsEvent::ReplayStepped { .. } => "ReplayStep",
         _ => "Event",
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SecurityUiSummary {
+    pub(crate) active_threats: usize,
+    pub(crate) suspicious_activity: usize,
+    pub(crate) blocked_attacks: usize,
+    pub(crate) permission_violations: usize,
+    pub(crate) vulnerability_alerts: usize,
+    pub(crate) runtime_integrity: u8,
+}
+
+impl SecurityUiSummary {
+    pub(crate) fn from_state(state: &OpsState) -> Self {
+        let active_threats = state
+            .explainability
+            .iter()
+            .filter(|record| {
+                record
+                    .action
+                    .to_ascii_lowercase()
+                    .contains("threat detected")
+            })
+            .count();
+        let blocked_attacks = state
+            .executions
+            .iter()
+            .filter(|record| is_blocked_execution(record))
+            .count()
+            + state
+                .explainability
+                .iter()
+                .filter(|record| {
+                    record
+                        .action
+                        .to_ascii_lowercase()
+                        .contains("blocked prompt")
+                })
+                .count();
+        let permission_violations = state
+            .executions
+            .iter()
+            .filter(|record| is_permission_violation(record))
+            .count();
+        let suspicious_activity = state
+            .executions
+            .iter()
+            .filter(|record| record.status == "failed")
+            .count()
+            + state
+                .coordination_links
+                .iter()
+                .filter(|link| is_security_record(&link.message))
+                .count();
+        let vulnerability_alerts = state
+            .explainability
+            .iter()
+            .filter(|record| {
+                let action = record.action.to_ascii_lowercase();
+                let why = record.why.to_ascii_lowercase();
+                action.contains("security audit")
+                    || why.contains("findings")
+                    || action.contains("vulnerab")
+            })
+            .count();
+        let mut integrity = 100u8;
+        integrity = integrity.saturating_sub((permission_violations as u8).saturating_mul(12));
+        integrity = integrity.saturating_sub((active_threats as u8).saturating_mul(10));
+        integrity = integrity.saturating_sub((vulnerability_alerts as u8).saturating_mul(4));
+        if state.sandbox_policy.approved_roles.is_empty() {
+            integrity = integrity.saturating_sub(8);
+        }
+        if state.current_role == UserRole::Admin {
+            integrity = integrity.saturating_sub(4);
+        }
+        Self {
+            active_threats,
+            suspicious_activity,
+            blocked_attacks,
+            permission_violations,
+            vulnerability_alerts,
+            runtime_integrity: integrity.max(20),
+        }
+    }
+}
+
+fn is_security_record(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    [
+        "security",
+        "threat",
+        "blocked",
+        "sandbox",
+        "injection",
+        "permission",
+        "vulnerab",
+        "attack",
+        "policy",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn is_blocked_execution(record: &ExecutionRecord) -> bool {
+    record.status == "failed"
+        && (record
+            .output_preview
+            .to_ascii_lowercase()
+            .contains("blocked")
+            || record.command.to_ascii_lowercase().contains("rm ")
+            || record.command.contains(';')
+            || record.command.contains('|'))
+}
+
+fn is_permission_violation(record: &ExecutionRecord) -> bool {
+    let output = record.output_preview.to_ascii_lowercase();
+    output.contains("not permitted")
+        || output.contains("permission")
+        || output.contains("approval")
+        || output.contains("remediation engine")
+}
+
+fn is_security_event(event: &OpsEvent) -> bool {
+    match event {
+        OpsEvent::CommandExecuted {
+            success,
+            stderr,
+            command,
+            ..
+        } => {
+            !success
+                && (is_security_record(stderr)
+                    || command.contains(';')
+                    || command.contains('|')
+                    || command.to_ascii_lowercase().contains("rm "))
+        }
+        OpsEvent::ExplainabilityRecorded { record } => {
+            is_security_record(&record.action) || is_security_record(&record.why)
+        }
+        OpsEvent::RecoveryProposed { action } => is_security_record(&action.risk),
+        OpsEvent::SandboxPolicyUpdated { .. } => true,
+        _ => false,
+    }
+}
+
+fn plugin_security_risk(plugin: &PluginDescriptor) -> String {
+    let name_safe = !plugin.name.is_empty()
+        && plugin.name.len() <= 80
+        && plugin
+            .name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
+    let scoped = plugin.description.contains("fs:deny")
+        || plugin.description.contains("net:deny")
+        || plugin.description.contains("net:configured");
+    if !name_safe {
+        "blocked-name".into()
+    } else if scoped {
+        "scoped".into()
+    } else if plugin.status == PluginStatus::Enabled {
+        "review".into()
+    } else {
+        "registered".into()
+    }
+}
+
+fn estimated_memory_pressure(state: &OpsState) -> u8 {
+    let units = state.events.len()
+        + state.logs.len()
+        + state.executions.len()
+        + state.explainability.len()
+        + state.reasoning_stream.len();
+    ((units as u16 * 100) / 600).min(100) as u8
+}
+
+fn threat_color(value: usize) -> Color {
+    match value {
+        0 => Color::Green,
+        1..=2 => Color::Yellow,
+        _ => Color::Red,
+    }
+}
+
+fn short_time(timestamp: &str) -> String {
+    if timestamp.len() >= 8 {
+        timestamp[timestamp.len().saturating_sub(8)..].into()
+    } else if timestamp.is_empty() {
+        "-".into()
+    } else {
+        timestamp.into()
     }
 }
 

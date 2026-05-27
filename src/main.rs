@@ -12,6 +12,7 @@ mod plugins;
 mod remediation;
 mod reports;
 mod runtime;
+mod security;
 mod trace;
 mod ui;
 mod utils;

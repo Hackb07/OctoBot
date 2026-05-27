@@ -4,6 +4,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     models::{OpsEvent, PluginDescriptor, PluginKind, PluginStatus},
+    security::{PluginSecurity, SecurityPolicy, redact_sensitive},
     utils::now_ts,
 };
 
@@ -56,9 +57,12 @@ impl Plugin for ExternalScriptPlugin {
     }
 
     fn init(&mut self) -> PluginResult {
-        if !std::path::Path::new(&self.script_path).exists() {
+        let path = std::path::Path::new(&self.script_path);
+        if !path.exists() {
             return Err(format!("script not found: {}", self.script_path));
         }
+        PluginSecurity::validate_descriptor(&self.descriptor)?;
+        PluginSecurity::validate_script_path(path)?;
         Ok(())
     }
 
@@ -76,15 +80,22 @@ impl Plugin for ExternalScriptPlugin {
         if !self.running {
             return Err("plugin is not running".into());
         }
+        if let Some(reason) = SecurityPolicy::detect_prompt_attack(input) {
+            return Err(format!("plugin input rejected: {reason}"));
+        }
         let output = std::process::Command::new(&self.script_path)
-            .arg(input)
+            .arg(SecurityPolicy::sanitize_prompt(input))
             .output()
             .map_err(|e| format!("execution failed: {e}"))?;
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stdout = redact_sensitive(&String::from_utf8_lossy(&output.stdout))
+            .trim()
+            .to_string();
         if output.status.success() {
             Ok(stdout)
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stderr = redact_sensitive(&String::from_utf8_lossy(&output.stderr))
+                .trim()
+                .to_string();
             Err(format!("script failed ({}): {stderr}", output.status))
         }
     }
@@ -129,6 +140,7 @@ impl Plugin for NativePlugin {
     }
 
     fn init(&mut self) -> PluginResult {
+        PluginSecurity::validate_descriptor(&self.descriptor)?;
         self.descriptor.status = PluginStatus::Registered;
         Ok(())
     }
@@ -149,7 +161,14 @@ impl Plugin for NativePlugin {
         if !self.running {
             return Err("plugin is not enabled".into());
         }
-        let result = format!("plugin {} processed: {input}", self.descriptor.name);
+        if let Some(reason) = SecurityPolicy::detect_prompt_attack(input) {
+            return Err(format!("plugin input rejected: {reason}"));
+        }
+        let result = format!(
+            "plugin {} processed: {}",
+            self.descriptor.name,
+            SecurityPolicy::sanitize_prompt(input)
+        );
         Ok(result)
     }
 }
@@ -181,7 +200,9 @@ pub(crate) fn discover_plugins(dir: &str) -> Vec<PluginDescriptor> {
             if path.extension().and_then(|e| e.to_str()) == Some("json") {
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     if let Ok(desc) = serde_json::from_str::<PluginDescriptor>(&content) {
-                        plugins.push(desc);
+                        if PluginSecurity::validate_descriptor(&desc).is_ok() {
+                            plugins.push(desc);
+                        }
                     }
                 }
             }
@@ -196,7 +217,13 @@ pub(crate) fn load_plugin_from_dir(
     descriptor: &PluginDescriptor,
 ) -> Option<Box<dyn Plugin>> {
     let script_path = path.with_extension("sh");
+    if PluginSecurity::validate_descriptor(descriptor).is_err() {
+        return None;
+    }
     if script_path.exists() {
+        if PluginSecurity::validate_script_path(&script_path).is_err() {
+            return None;
+        }
         Some(Box::new(ExternalScriptPlugin::new(
             descriptor.clone(),
             script_path.to_string_lossy().to_string(),

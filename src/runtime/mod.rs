@@ -23,6 +23,10 @@ use crate::{
     models::{AgentRole, OpsEvent, OpsState, RecoveryAction, RecoveryStatus, UserRole},
     observability::ObservabilityEngine,
     persistence::PersistenceRuntime,
+    security::{
+        CommandTier, RateLimiter, ReliabilityGuard, SecurityAuditor, SecurityPolicy,
+        ThreatDetector, redact_sensitive,
+    },
     utils::{next_agent_name, next_id, next_sub_agent_name, now_ts},
     workflows::{
         DagWorkflowRuntime, NodeStatus, WorkflowNode, WorkflowNodeKind, load_workflows_from_dir,
@@ -53,6 +57,8 @@ pub(crate) async fn ops_runtime(
     // Maps command_id → (workflow_id, node_id, command)
     let mut pending_workflow_nodes: HashMap<String, (String, String, String)> = HashMap::new();
     let mut observability = ObservabilityEngine::default();
+    let mut command_rate_limiter = RateLimiter::new(12, Duration::from_secs(10));
+    let mut ai_rate_limiter = RateLimiter::new(20, Duration::from_secs(60));
     loop {
         tokio::select! {
             _ = infra_interval.tick() => {
@@ -94,10 +100,26 @@ pub(crate) async fn ops_runtime(
                 let ai_client = client_for_kind(&ai_clients, AgentKind::Security);
                 observability.analyze_incidents(ai_client, &state, &event_tx).await;
                 observability.analyze_recent_logs(ai_client, &state, &event_tx).await;
+                let findings = SecurityAuditor::audit_state(&state);
+                let _ = event_tx.send(OpsEvent::ExplainabilityRecorded {
+                    record: SecurityAuditor::explainability_record(&findings),
+                });
+                for signal in ThreatDetector::analyze(&state) {
+                    let _ = event_tx.send(ThreatDetector::event_for(&signal));
+                }
             }
             _ = interval.tick() => {
                 state.uptime_secs = started.elapsed().as_secs();
                 state.tick();
+                ReliabilityGuard::cleanup_state(&mut state);
+                let pressure = ReliabilityGuard::memory_pressure(&state);
+                if pressure >= 85 {
+                    let _ = event_tx.send(OpsEvent::NotificationRaised {
+                        level: "warn".into(),
+                        message: format!("runtime memory pressure at {pressure}% after cleanup"),
+                        timestamp: now_ts(),
+                    });
+                }
                 if !startup_workflow_started && !ai_clients.is_empty() && state.uptime_secs > 2 {
                     startup_workflow_started = true;
                     let planner_id = next_agent_name();
@@ -154,7 +176,19 @@ pub(crate) async fn ops_runtime(
                         let id = id.clone();
                         let command = command.clone();
                         let dry_run = *dry_run;
-                        tokio::spawn(run_infrastructure_command(id, command, dry_run, event_tx.clone()));
+                        if !command_rate_limiter.allow("command-execution") {
+                            let _ = event_tx.send(OpsEvent::CommandExecuted {
+                                id,
+                                command,
+                                success: false,
+                                exit_code: None,
+                                stdout: String::new(),
+                                stderr: "blocked by rate limiter: command execution budget exhausted".into(),
+                                timestamp: now_ts(),
+                            });
+                        } else {
+                            tokio::spawn(run_infrastructure_command(id, command, dry_run, event_tx.clone()));
+                        }
                     }
                     OpsEvent::AgentSpawned { name, role, timestamp } => {
                         if let Some(client) = client_for_role(&ai_clients, role) {
@@ -179,13 +213,36 @@ pub(crate) async fn ops_runtime(
                             .find(|a| a.name == *agent)
                             .map(|a| a.role.clone())
                             .unwrap_or(AgentRole::Executor);
+                        if !ai_rate_limiter.allow(&format!("agent-task-{agent}")) {
+                            let _ = event_tx.send(OpsEvent::AgentLifecycleChanged {
+                                agent: agent.clone(),
+                                status: crate::models::AgentStatus::Failed,
+                                task: "blocked by rate limiter: AI task budget exhausted".into(),
+                                timestamp: now_ts(),
+                            });
+                            continue;
+                        }
+                        if let Some(reason) = SecurityPolicy::detect_prompt_attack(task) {
+                            let _ = event_tx.send(OpsEvent::ExplainabilityRecorded {
+                                record: crate::models::ExplainabilityRecord {
+                                    id: next_id("prompt-block"),
+                                    action: "Blocked prompt injection".into(),
+                                    why: reason,
+                                    evidence: vec![task.clone()],
+                                    confidence: 91,
+                                    tools_used: vec!["prompt-policy".into()],
+                                    timestamp: now_ts(),
+                                },
+                            });
+                            continue;
+                        }
                         if let Some(client) = client_for_role(&ai_clients, &role) {
                             if let Some(prev) = pending_tasks.insert(agent.clone(), task.clone()) {
                                 tracing::warn!(agent, prev_task = %prev, new_task = %task, "agent overwritten with new task");
                             }
                             let client = client.clone();
                             let agent = agent.clone();
-                            let task = task.clone();
+                            let task = SecurityPolicy::sanitize_prompt(task);
                             let ts = timestamp.clone();
                             let tx = event_tx.clone();
                             if is_planner {
@@ -1090,6 +1147,10 @@ async fn execute_ai_tool(
     arguments: &Value,
     event_tx: &mpsc::UnboundedSender<OpsEvent>,
 ) -> Value {
+    let role = AgentRole::Executor;
+    if let Err(error) = SecurityPolicy::validate_tool_call(&role, name, arguments) {
+        return json!({ "error": error, "tool": name });
+    }
     match name {
         "exec_command" => {
             let command = arguments
@@ -1132,8 +1193,10 @@ async fn execute_ai_tool(
                         let output = child.wait_with_output().await;
                         match output {
                             Ok(out) => {
-                                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                                let stdout =
+                                    redact_sensitive(&String::from_utf8_lossy(&out.stdout));
+                                let stderr =
+                                    redact_sensitive(&String::from_utf8_lossy(&out.stderr));
                                 let _ = event_tx_clone.send(OpsEvent::CommandExecuted {
                                     id: id_clone,
                                     command: command_clone.clone(),
@@ -1567,8 +1630,8 @@ async fn run_infrastructure_command(
         command,
         success: status.success(),
         exit_code: status.code(),
-        stdout,
-        stderr,
+        stdout: redact_sensitive(&stdout),
+        stderr: redact_sensitive(&stderr),
         timestamp: now_ts(),
     });
 }
@@ -1665,6 +1728,7 @@ async fn stream_command_output(
         .and_then(|v| v.parse().ok())
         .unwrap_or(100usize);
     while let Ok(Some(line)) = lines.next_line().await {
+        let line = redact_sensitive(&line);
         if captured.len() < max_captured {
             captured.push(line.clone());
         }
@@ -1686,6 +1750,13 @@ pub(crate) struct ParsedCommand {
 pub(crate) fn parse_allowlisted_command(
     command: &str,
 ) -> std::result::Result<ParsedCommand, String> {
+    let decision = SecurityPolicy::validate_command(command)?;
+    if matches!(decision.tier, CommandTier::Remediation) {
+        return Err(format!(
+            "blocked by sandbox allowlist: `{command}` must use the approved remediation engine ({})",
+            decision.audit
+        ));
+    }
     let parts = command.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
         ["docker", "ps"] => Ok(ParsedCommand {

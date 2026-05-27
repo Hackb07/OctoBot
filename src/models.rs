@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::utils::{now_ts, trim_preview};
+use crate::{
+    security::redact_sensitive,
+    utils::{now_ts, trim_preview},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Agent {
@@ -1033,6 +1036,7 @@ impl OpsState {
             OpsEvent::CommandOutput {
                 id, stream, line, ..
             } => {
+                let line = redact_sensitive(line);
                 self.logs.push(format!("[{stream}] {line}"));
                 if let Some(existing) = self.executions.iter_mut().find(|item| item.id == *id) {
                     existing.output_preview = trim_preview(format!(

@@ -10,6 +10,7 @@ use crate::{
         Plugin, PluginInstance, discover_plugins, emit_plugin_registered,
         emit_plugin_status_changed, load_plugin_from_dir,
     },
+    security::PluginSecurity,
 };
 
 pub(crate) struct PluginRegistry {
@@ -34,6 +35,7 @@ impl PluginRegistry {
 
     pub(crate) fn register(&mut self, plugin: Box<dyn Plugin>) -> Result<(), String> {
         let name = plugin.descriptor().name.clone();
+        PluginSecurity::validate_descriptor(plugin.descriptor())?;
         if self.plugins.contains_key(&name) {
             return Err(format!("plugin '{name}' is already registered"));
         }
@@ -219,10 +221,11 @@ impl PluginApi {
                     status: PluginStatus::Registered,
                     owner: "operator".into(),
                 };
+                let scopes = PluginSecurity::permissions_for_kind(&descriptor.kind).join(",");
                 let plugin = crate::plugins::host::NativePlugin::new(
                     &descriptor.name,
                     descriptor.kind.clone(),
-                    &descriptor.description,
+                    &format!("{} [{}]", descriptor.description, scopes),
                     &descriptor.version,
                     &descriptor.owner,
                 );
