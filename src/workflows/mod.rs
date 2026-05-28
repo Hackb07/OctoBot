@@ -7,7 +7,11 @@ use std::{
 use color_eyre::eyre::{Context, Result, eyre};
 use serde::{Deserialize, Serialize};
 
-use crate::{models::WorkflowDefinitionSummary, utils::now_ts};
+use crate::{
+    ai::{RuntimeAgentKind, route_model},
+    models::WorkflowDefinitionSummary,
+    utils::now_ts,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WorkflowDefinition {
@@ -15,6 +19,158 @@ pub(crate) struct WorkflowDefinition {
     pub(crate) name: String,
     pub(crate) entrypoint: String,
     pub(crate) nodes: Vec<WorkflowNode>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) enum SwarmPattern {
+    Hierarchical,
+    Sequential,
+    Parallel,
+    Voting,
+    Recovery,
+}
+
+impl SwarmPattern {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Hierarchical => "hierarchical",
+            Self::Sequential => "sequential",
+            Self::Parallel => "parallel",
+            Self::Voting => "voting",
+            Self::Recovery => "recovery",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SwarmRuntimePolicy {
+    pub(crate) cancellation: bool,
+    pub(crate) retry_attempts: u8,
+    pub(crate) timeout_ms: u64,
+    pub(crate) failure_isolation: bool,
+    pub(crate) trace_execution: bool,
+}
+
+impl Default for SwarmRuntimePolicy {
+    fn default() -> Self {
+        Self {
+            cancellation: true,
+            retry_attempts: 2,
+            timeout_ms: 120_000,
+            failure_isolation: true,
+            trace_execution: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SwarmNodePlan {
+    pub(crate) agent: RuntimeAgentKind,
+    pub(crate) task: String,
+    pub(crate) model: String,
+    pub(crate) depends_on: Vec<RuntimeAgentKind>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SwarmExecutionPlan {
+    pub(crate) id: String,
+    pub(crate) pattern: SwarmPattern,
+    pub(crate) objective: String,
+    pub(crate) nodes: Vec<SwarmNodePlan>,
+    pub(crate) policy: SwarmRuntimePolicy,
+}
+
+impl SwarmExecutionPlan {
+    pub(crate) fn new(pattern: SwarmPattern, objective: impl Into<String>) -> Self {
+        let objective = objective.into();
+        let agents = agents_for_pattern(pattern);
+        let nodes = agents
+            .iter()
+            .enumerate()
+            .map(|(idx, agent)| {
+                let task = task_for_agent(*agent, &objective);
+                let decision = route_model(&task, *agent);
+                SwarmNodePlan {
+                    agent: *agent,
+                    task,
+                    model: decision.model,
+                    depends_on: dependencies_for_pattern(pattern, &agents, idx),
+                }
+            })
+            .collect();
+        Self {
+            id: format!(
+                "swarm-{}-{}",
+                pattern.as_str(),
+                now_ts().replace([':', '-'], "")
+            ),
+            pattern,
+            objective,
+            nodes,
+            policy: SwarmRuntimePolicy::default(),
+        }
+    }
+
+    pub(crate) fn coding_pipeline(objective: impl Into<String>) -> Self {
+        let objective = objective.into();
+        let agents = [
+            RuntimeAgentKind::Memory,
+            RuntimeAgentKind::Planner,
+            RuntimeAgentKind::Coding,
+            RuntimeAgentKind::Execution,
+            RuntimeAgentKind::Validation,
+            RuntimeAgentKind::Recovery,
+        ];
+        let nodes = agents
+            .iter()
+            .enumerate()
+            .map(|(idx, agent)| {
+                let task = match agent {
+                    RuntimeAgentKind::Memory => {
+                        format!("Index repository and retrieve semantic context for: {objective}")
+                    }
+                    RuntimeAgentKind::Planner => {
+                        format!("Create contextual implementation plan for: {objective}")
+                    }
+                    RuntimeAgentKind::Coding => {
+                        format!("Generate patch and code diff for: {objective}")
+                    }
+                    RuntimeAgentKind::Execution => {
+                        format!("Execute approved tool loop and capture telemetry for: {objective}")
+                    }
+                    RuntimeAgentKind::Validation => {
+                        format!("Run validation gates and summarize acceptance for: {objective}")
+                    }
+                    RuntimeAgentKind::Recovery => {
+                        format!(
+                            "Analyze validation failures and produce repair loop for: {objective}"
+                        )
+                    }
+                    _ => objective.clone(),
+                };
+                SwarmNodePlan {
+                    agent: *agent,
+                    model: route_model(&task, *agent).model,
+                    task,
+                    depends_on: if idx == 0 {
+                        Vec::new()
+                    } else {
+                        vec![agents[idx - 1]]
+                    },
+                }
+            })
+            .collect();
+        Self {
+            id: format!("swarm-coding-{}", now_ts().replace([':', '-'], "")),
+            pattern: SwarmPattern::Sequential,
+            objective,
+            nodes,
+            policy: SwarmRuntimePolicy {
+                retry_attempts: 3,
+                ..SwarmRuntimePolicy::default()
+            },
+        }
+    }
 }
 
 pub(crate) fn load_workflows_from_dir(path: impl AsRef<Path>) -> Result<Vec<DagWorkflowRuntime>> {
@@ -389,6 +545,95 @@ fn validate_definition(definition: &WorkflowDefinition) -> Result<()> {
         }
     }
     ensure_acyclic(definition)
+}
+
+fn agents_for_pattern(pattern: SwarmPattern) -> Vec<RuntimeAgentKind> {
+    match pattern {
+        SwarmPattern::Hierarchical => vec![
+            RuntimeAgentKind::Planner,
+            RuntimeAgentKind::Research,
+            RuntimeAgentKind::Security,
+            RuntimeAgentKind::Coding,
+            RuntimeAgentKind::Validation,
+        ],
+        SwarmPattern::Sequential => vec![
+            RuntimeAgentKind::Planner,
+            RuntimeAgentKind::Execution,
+            RuntimeAgentKind::Validation,
+        ],
+        SwarmPattern::Parallel => vec![
+            RuntimeAgentKind::Research,
+            RuntimeAgentKind::Security,
+            RuntimeAgentKind::Infra,
+            RuntimeAgentKind::Coding,
+        ],
+        SwarmPattern::Voting => vec![
+            RuntimeAgentKind::Security,
+            RuntimeAgentKind::Validation,
+            RuntimeAgentKind::Planner,
+        ],
+        SwarmPattern::Recovery => vec![
+            RuntimeAgentKind::Recovery,
+            RuntimeAgentKind::Infra,
+            RuntimeAgentKind::Execution,
+            RuntimeAgentKind::Validation,
+        ],
+    }
+}
+
+fn dependencies_for_pattern(
+    pattern: SwarmPattern,
+    agents: &[RuntimeAgentKind],
+    idx: usize,
+) -> Vec<RuntimeAgentKind> {
+    match pattern {
+        SwarmPattern::Hierarchical => {
+            if idx == 0 {
+                Vec::new()
+            } else {
+                vec![RuntimeAgentKind::Planner]
+            }
+        }
+        SwarmPattern::Sequential | SwarmPattern::Recovery => {
+            if idx == 0 {
+                Vec::new()
+            } else {
+                vec![agents[idx - 1]]
+            }
+        }
+        SwarmPattern::Parallel => Vec::new(),
+        SwarmPattern::Voting => {
+            if idx < 2 {
+                Vec::new()
+            } else {
+                vec![RuntimeAgentKind::Security, RuntimeAgentKind::Validation]
+            }
+        }
+    }
+}
+
+fn task_for_agent(agent: RuntimeAgentKind, objective: &str) -> String {
+    match agent {
+        RuntimeAgentKind::Planner => format!("Plan and delegate objective: {objective}"),
+        RuntimeAgentKind::Coding => {
+            format!("Analyze repository and prepare code changes for: {objective}")
+        }
+        RuntimeAgentKind::Security => {
+            format!("Assess policy, command, and exploit risk for: {objective}")
+        }
+        RuntimeAgentKind::Infra => format!("Inspect infrastructure state related to: {objective}"),
+        RuntimeAgentKind::Research => format!("Collect supporting evidence for: {objective}"),
+        RuntimeAgentKind::Recovery => {
+            format!("Prepare rollback, checkpoint, and repair strategy for: {objective}")
+        }
+        RuntimeAgentKind::Validation => {
+            format!("Validate output and provide consensus decision for: {objective}")
+        }
+        RuntimeAgentKind::Memory => {
+            format!("Retrieve and compress memory context for: {objective}")
+        }
+        RuntimeAgentKind::Execution => format!("Execute approved tools for: {objective}"),
+    }
 }
 
 fn ensure_acyclic(definition: &WorkflowDefinition) -> Result<()> {

@@ -36,10 +36,29 @@ cargo run
 Expected tests:
 
 ```text
-42 passed
+49 passed
 ```
 
 Press `/` for commands, `1`-`9` for views, `Tab` to cycle views, `?` for help, and `q` to quit.
+
+`cargo run` is the normal local entry point. It starts or reuses these services before opening the terminal UI:
+
+- Ollama on `127.0.0.1:11434`
+- Python orchestrator on `127.0.0.1:8787`
+- Frontend dev server on `127.0.0.1:5173`
+- Rust control API on `127.0.0.1:7878`
+- Rust runtime service on `127.0.0.1:7879`
+
+Service logs are written under `.octobot/logs/`. To disable service autostart, run with `OCTOBOT_NO_AUTOSTART=1`.
+
+For a service-only local developer workflow, start or reuse the background services with:
+
+```bash
+scripts/start-dev.sh
+scripts/healthcheck.sh
+```
+
+`scripts/start-dev.sh` reuses already-running services instead of failing with duplicate-port errors.
 
 ## Optional Ollama Setup
 
@@ -160,11 +179,10 @@ curl http://127.0.0.1:7878/api/plugins
 
 ## Autonomous Orchestrator Smoke Test
 
-Start the Python orchestrator:
+Start all local services through the Rust entry point:
 
 ```bash
-. .venv/bin/activate
-uvicorn backend.octobot_orchestrator.main:app --host 127.0.0.1 --port 8787
+cargo run
 ```
 
 Create and run a dry-run coding task:

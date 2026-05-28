@@ -16,8 +16,8 @@ use tokio::{
 use crate::{
     agents::AgentRuntimeManager,
     ai::{
-        AgentKind, AgentPrompt, AiClient, ToolCallResult, ToolSpec, agent_kind_for_role,
-        build_messages, default_agent_profiles,
+        AgentKind, AgentPrompt, AiClient, RustNativeRuntimeDescriptor, ToolCallResult, ToolSpec,
+        agent_kind_for_role, build_messages,
     },
     infra::InfraIntegrations,
     models::{
@@ -51,6 +51,7 @@ pub(crate) async fn ops_runtime(
     let infra = InfraIntegrations::from_env();
     let mut ai_clients = build_ai_clients();
     register_ollama_models(&event_tx, &ai_clients).await;
+    register_rust_native_runtime(&event_tx);
     let mut dag_workflows: Vec<DagWorkflowRuntime> = load_configured_workflows(&event_tx);
     if let Err(error) = persistence.reconstruct_state().await {
         tracing::warn!(%error, "historical state reconstruction failed");
@@ -488,9 +489,10 @@ pub(crate) async fn ops_runtime(
 }
 
 fn build_ai_clients() -> Vec<AiClient> {
-    default_agent_profiles()
+    RustNativeRuntimeDescriptor::new()
+        .agents
         .into_iter()
-        .map(AiClient::new)
+        .map(|spec| AiClient::new(spec.agent_profile()))
         .collect()
 }
 
@@ -628,6 +630,75 @@ async fn register_ollama_models(
                 timestamp: now_ts(),
             });
         }
+    }
+}
+
+fn register_rust_native_runtime(event_tx: &mpsc::UnboundedSender<OpsEvent>) {
+    let descriptor = RustNativeRuntimeDescriptor::new();
+    let required_models = descriptor.required_models().join(", ");
+    let _ = event_tx.send(OpsEvent::NotificationRaised {
+        level: "info".into(),
+        message: format!(
+            "rust-native AI runtime registered: agent_runtime={}, swarm_runtime={}, provider={}, models=[{}]",
+            descriptor.agent_runtime,
+            descriptor.swarm_runtime,
+            descriptor.local_provider,
+            required_models
+        ),
+        timestamp: now_ts(),
+    });
+    let _ = event_tx.send(OpsEvent::ExplainabilityRecorded {
+        record: ExplainabilityRecord {
+            id: next_id("rust-ai-runtime"),
+            action: "Registered Rust-native AI orchestration backbone".into(),
+            why: "Phase 30 routes autonomous agents through rig-compatible agent specs, swarms_rs swarm plans, and ollama-rs local provider metadata while preserving existing event replay.".into(),
+            evidence: vec![
+                format!("agent_runtime={}", descriptor.agent_runtime),
+                format!("swarm_runtime={}", descriptor.swarm_runtime),
+                format!("local_provider={}", descriptor.local_provider),
+                format!("agent_count={}", descriptor.agents.len()),
+                format!("required_models={required_models}"),
+            ],
+            confidence: 90,
+            tools_used: vec![
+                "rig".into(),
+                "swarms_rs".into(),
+                "ollama-rs".into(),
+                "runtime-registry".into(),
+            ],
+            timestamp: now_ts(),
+        },
+    });
+    for spec in descriptor.agents {
+        let _ = event_tx.send(OpsEvent::RuntimeUpdated {
+            runtime: crate::models::AgentRuntime {
+                agent: spec.name.clone(),
+                kind: crate::models::AgentRuntimeKind::LocalProcess,
+                endpoint: format!("rig://ollama-rs/{}", spec.name),
+                status: crate::models::RuntimeStatus::Local,
+                heartbeat: now_ts(),
+                notes: format!(
+                    "model={} memory_scope={} tools={} streaming={} async={} replay={}",
+                    spec.model,
+                    spec.memory_scope,
+                    spec.tools.len(),
+                    spec.streaming,
+                    spec.async_execution,
+                    spec.replay_compatible
+                ),
+            },
+        });
+        let _ = event_tx.send(OpsEvent::AgentMemoryEntryRecorded {
+            entry: crate::models::AgentMemoryEntry {
+                id: next_id("agent-memory"),
+                scope: spec.memory_scope,
+                kind: "runtime-agent-spec".into(),
+                key: spec.name,
+                preview: spec.prompt.chars().take(160).collect(),
+                provenance: "phase-30-rust-native-runtime".into(),
+                created_at: now_ts(),
+            },
+        });
     }
 }
 

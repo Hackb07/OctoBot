@@ -1,6 +1,6 @@
 # OctoBot
 
-OctoBot is a local-first AI operations and autonomous coding platform. It combines a Rust terminal control center, a secure runtime service, a Python orchestration layer, coding-agent tools, replayable events, plugin SDK tooling, and deployment profiles.
+OctoBot is a local-first AI operations and autonomous coding platform. It combines a Rust terminal control center, a secure runtime service, a Python orchestration layer, coding-agent tools, replayable events, plugin SDK tooling, and deployment profiles. Phase 30 migrates core orchestration to a Rust-native runtime built on `rig`, `swarms_rs`, and `ollama-rs`.
 
 Use it to investigate incidents, run allowlisted infrastructure commands, coordinate agents, index repositories, execute coding workflows, review validation results, and generate reports with an audit trail.
 
@@ -60,6 +60,7 @@ Use it to investigate incidents, run allowlisted infrastructure commands, coordi
 | 27 | [x] | Complete desktop UI |
 | 28 | [x] | Signed plugin SDK |
 | 29 | [x] | Production deployment mode |
+| 30 | [x] | Rust-native AI runtime migration with `rig`, `swarms_rs`, and `ollama-rs` |
 
 ### Phase Task Checklist
 
@@ -108,6 +109,102 @@ Use it to investigate incidents, run allowlisted infrastructure commands, coordi
 | 29 | [x] | Service authentication |
 | 29 | [x] | TLS endpoint configuration |
 | 29 | [x] | Production healthchecks |
+| 30 | [x] | `rig` agent lifecycle, tool calling, structured output, memory, context, and provider routing |
+| 30 | [x] | `swarms_rs` hierarchical, sequential, parallel, voting, and recovery swarms |
+| 30 | [x] | `ollama-rs` streaming inference, embeddings, model switching, and offline local execution |
+| 30 | [x] | Rust-native Planner, Coding, Security, Infra, Research, Recovery, Validation, Memory, and Execution agents |
+| 30 | [x] | Agent-scoped memory, replay compatibility, streaming responses, tracing, cancellation, retries, and timeout guards |
+| 30 | [x] | Coding runtime flow from repository indexing through retrieval, planning, execution, validation, repair, and final report |
+
+## Rust-Native AI Runtime Migration
+
+Phase 30 upgrades OctoBot from mixed orchestration into a unified Rust-native autonomous runtime. The migration keeps the existing APIs, Ratatui TUI, Tauri desktop shell, observability streams, plugin SDK, deployment profiles, replay systems, memory stores, and security boundaries while moving core agent reasoning and orchestration behind three Rust AI crates:
+
+| Crate | Role |
+|---|---|
+| `rig` | Primary agent runtime for lifecycle management, tool calling, structured outputs, provider abstraction, context injection, memory integration, streaming, and model routing |
+| `swarms_rs` | Multi-agent orchestration for hierarchical, sequential, parallel, voting, and recovery swarms |
+| `ollama-rs` | Local inference provider for streaming generation, embeddings, offline execution, model switching, and tool-capable local models |
+
+### Runtime Agents
+
+The Rust runtime exposes these first-class autonomous agents:
+
+| Agent | Scope |
+|---|---|
+| `PlannerAgent` | Task decomposition, planning trees, delegation, and workflow strategy |
+| `CodingAgent` | Repository analysis, semantic retrieval, patch generation, execution loops, validation, and debugger repair |
+| `SecurityAgent` | Vulnerability analysis, command validation, sandbox policy, plugin inspection, and prompt-injection defense |
+| `InfraAgent` | Infrastructure state reasoning, incident triage, service recovery, and SRE workflows |
+| `ResearchAgent` | Evidence gathering, cross-source synthesis, and report context |
+| `RecoveryAgent` | Rollback planning, remediation proposals, retry orchestration, and workflow recovery |
+| `ValidationAgent` | Test execution review, policy gates, consensus checks, and final acceptance |
+| `MemoryAgent` | Context compression, semantic recall, execution snapshots, and replay memory |
+| `ExecutionAgent` | Tool execution, sandbox dispatch, command telemetry, and failure classification |
+
+Each agent has independent prompts, independent tool sets, isolated memory scopes, async execution, streaming responses, replay-compatible event records, and traceable runtime registration.
+
+### Swarm Patterns
+
+The `swarms_rs` orchestration layer coordinates agents with:
+
+| Pattern | Purpose |
+|---|---|
+| Hierarchical swarm | Planner-led delegation to specialized agents |
+| Sequential swarm | Ordered workflow stages such as index, retrieve, plan, execute, validate, repair |
+| Parallel swarm | Concurrent research, security, infrastructure, and coding analysis |
+| Voting swarm | Consensus validation before risky edits, remediation, or production actions |
+| Recovery swarm | Failure isolation, rollback planning, checkpoint restore, and repair retries |
+
+Runtime controls include cancellation, retry policies, timeout guards, panic isolation, circuit breakers, task checkpointing, watchdogs, failure isolation, deadlock prevention, and execution tracing.
+
+### Local Model Routing
+
+`ollama-rs` is registered as the default local provider. Model routing selects a profile by task type:
+
+| Workload | Default Models |
+|---|---|
+| Coding | `deepseek-coder`, `qwen2.5-coder:7b` |
+| Planning | `llama3.1:8b` |
+| Security and tool use | `llama3.1:8b` |
+| Fast utility tasks | `mistral`, `phi` |
+
+Lightweight models handle fast routing and summaries, larger reasoning models handle planning and security analysis, and coding-specific models handle repository tasks. Local execution remains offline-capable and supports quantized Ollama models where available.
+
+### Coding Agent Flow
+
+The upgraded coding runtime executes repository work as a replayable pipeline:
+
+```mermaid
+flowchart TD
+    Request[User Coding Task] --> Index[Repository Indexing]
+    Index --> Retrieve[Semantic Code Retrieval]
+    Retrieve --> Symbols[Tree-sitter Symbol and Dependency Analysis]
+    Symbols --> Plan[PlannerAgent Plan]
+    Plan --> Code[CodingAgent Patch Generation]
+    Code --> Exec[ExecutionAgent Tool Loop]
+    Exec --> Validate[ValidationAgent Tests and Policy Gates]
+    Validate -->|failed| Analyze[RecoveryAgent Failure Analysis]
+    Analyze --> Repair[Debugger Repair Loop]
+    Repair --> Exec
+    Validate -->|passed| Report[Replayable Final Report]
+```
+
+Repository memory RAG, execution history, task replay, contextual planning, diff generation, validation retries, and repair attempts are persisted into the existing memory and observability layers.
+
+### Memory, Security, and Observability
+
+The migration preserves the current persistent intelligence model and formalizes memory scopes:
+
+| Layer | Backing Store | Memory Types |
+|---|---|---|
+| Short-term | Redis | active workflow state, transient context, agent messages |
+| Long-term | PostgreSQL | workflow, coding, infrastructure, security, incident, and replay records |
+| Vector | Qdrant | semantic code, operational context, historical incident, and conversation retrieval |
+
+Security agents enforce capability-based permissions, command validation, sandbox boundaries, signed plugin policies, prompt-injection defenses, malicious plugin detection, runtime policy guards, and approval gates for autonomous remediation.
+
+Observability extends the existing OpenTelemetry, Prometheus, SSE, WebSocket, and replay APIs with agent execution traces, swarm execution graphs, reasoning-chain records, token usage, model latency, tool telemetry, repair-loop events, and model routing decisions.
 
 ## Workflow
 
@@ -130,6 +227,28 @@ flowchart TD
     Report --> Streams[SSE WebSocket Replay]
 ```
 
+Future Phase 30 workflow:
+
+```mermaid
+flowchart TD
+    User[User Request] --> API[Existing APIs]
+    API --> Rig[rig Agent Runtime]
+    Rig --> Route[Model Router]
+    Route --> Ollama[ollama-rs Local Provider]
+    Rig --> Swarms[swarms_rs Orchestration]
+    Swarms --> Planner[PlannerAgent]
+    Swarms --> Coding[CodingAgent]
+    Swarms --> Security[SecurityAgent]
+    Swarms --> Infra[InfraAgent]
+    Swarms --> Recovery[RecoveryAgent]
+    Swarms --> Validation[ValidationAgent]
+    Coding --> Tools[Secure Tool Runtime]
+    Security --> Policy[Policy Guards]
+    Rig --> Memory[Redis PostgreSQL Qdrant]
+    Rig --> Trace[OpenTelemetry Prometheus Replay]
+    Trace --> UI[TUI Desktop SSE WebSocket]
+```
+
 ## Architecture
 
 ```mermaid
@@ -146,6 +265,23 @@ flowchart LR
     Orchestrator --> Memory[SQLite Chroma RAG]
     Orchestrator --> Events[Task Events]
     Events --> Frontend
+```
+
+Target Phase 30 architecture:
+
+```mermaid
+flowchart LR
+    TUI[Ratatui TUI] --> API[Axum APIs]
+    Desktop[Tauri Desktop] --> API
+    API --> Runtime[rig Runtime Core]
+    Runtime --> Swarm[swarms_rs Swarm Engine]
+    Runtime --> LocalLLM[ollama-rs]
+    Swarm --> Agents[Planner Coding Security Infra Research Recovery Validation Memory Execution Agents]
+    Agents --> Tools[Tool and Plugin Runtime]
+    Tools --> Sandbox[Sandbox Policy and Execution Isolation]
+    Runtime --> Memory[Redis PostgreSQL Qdrant]
+    Runtime --> Observability[Tracing OpenTelemetry Prometheus SSE WebSocket Replay]
+    Runtime --> Security[Capability Policy Signed Plugins rustls ring]
 ```
 
 ## Functions
@@ -170,6 +306,7 @@ flowchart LR
 | Coding memory | [x] | `backend/octobot_orchestrator/memory/store.py` |
 | Plugin SDK | [x] | `backend/octobot_orchestrator/plugins/sdk.py` |
 | Desktop frontend | [x] | `frontend/` |
+| Rust-native AI runtime migration | [x] | `src/ai/`, `src/agents/`, `src/workflows/`, `src/runtime/` |
 
 ## Tech Stack
 
@@ -177,13 +314,14 @@ flowchart LR
 |---|---|
 | Terminal UI | Rust, Ratatui, Crossterm |
 | Rust API | Axum, Tokio |
+| Target Rust AI runtime | `rig`, `swarms_rs`, `ollama-rs` |
 | Runtime service | Rust WebSocket service |
 | Python API | FastAPI, Pydantic |
-| Agent graph | LangGraph with fallback planner |
+| Agent graph | Current: LangGraph with fallback planner; Target: `swarms_rs` over `rig` agents |
 | Frontend | React, TypeScript, Vite, Tauri |
-| Persistence | PostgreSQL, SQLite |
+| Persistence | PostgreSQL, Redis, SQLite |
 | Vector memory | Qdrant, ChromaDB |
-| Embeddings | HTTP endpoint, sentence-transformers, deterministic fallback |
+| Embeddings | `ollama-rs`, HTTP endpoint, sentence-transformers, deterministic fallback |
 | Runtime isolation | Docker, command policy, workspace policy |
 | Git tooling | GitPython, runtime git commands |
 | Testing | cargo test, pytest, ruff |
@@ -197,14 +335,14 @@ flowchart LR
 | Anthropic | [x] | Python provider-backed agents | `ANTHROPIC_API_KEY`, `OCTOBOT_ANTHROPIC_MODEL` |
 | Groq | [x] | OpenAI-compatible provider | `OCTOBOT_GROQ_API_KEY` |
 
-Default local model profiles:
+Rust-native local model profiles:
 
 | Role | Model |
 |---|---|
 | Planning | `llama3.1:8b` |
-| Coding | `qwen2.5-coder:7b` |
-| Security | `deepseek-r1:8b` |
-| Utility | `phi4` |
+| Coding | `deepseek-coder`, `qwen2.5-coder:7b` |
+| Security and tool use | `llama3.1:8b` |
+| Utility | `mistral`, `phi` |
 
 ## Codebase Structure
 

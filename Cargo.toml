@@ -10,6 +10,9 @@ crossterm = "0.29.0"
 ratatui = "0.30.0"
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls", "stream"] }
 futures-util = "0.3.31"
+ollama-rs = { version = "0.3.4", default-features = false, features = ["stream"] }
+rig = { package = "rig-core", version = "0.37.0" }
+swarms-rs = "0.2.1"
 async-channel = "2.3.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"

@@ -1,7 +1,11 @@
 use std::path::Path;
 
 use crate::{
-    ai::{AgentKind, AgentProfile, AgentPrompt, AiClient, ToolSpec},
+    ai::{
+        AgentKind, AgentProfile, AgentPrompt, AiClient, ModelWorkload, RuntimeAgentKind,
+        RustNativeRuntimeDescriptor, ToolSpec, resolve_installed_model_name, route_model,
+        tool_capable_model_for,
+    },
     infra::InfraIntegrations,
     models::{
         AgentMemoryEntry, AgentRole, AgentRuntime, AgentRuntimeKind, AgentStatus, AppPackage,
@@ -23,11 +27,218 @@ use crate::{
     trace::TraceEngine,
     ui::{SecurityUiSummary, command_completion, parse_chat_file_request, safe_chat_file_path},
     utils::now_ts,
-    workflows::{DagWorkflowRuntime, WorkflowNodeKind},
+    workflows::{DagWorkflowRuntime, SwarmExecutionPlan, SwarmPattern, WorkflowNodeKind},
 };
 
 use serde_json::json;
 use std::time::Duration;
+
+#[test]
+fn phase_30_runtime_descriptor_exposes_rust_native_agents() {
+    let descriptor = RustNativeRuntimeDescriptor::new();
+    assert_eq!(descriptor.agent_runtime, "rig");
+    assert_eq!(descriptor.swarm_runtime, "swarms_rs");
+    assert_eq!(descriptor.local_provider, "ollama-rs");
+    assert!(
+        descriptor
+            .crate_anchors
+            .iter()
+            .any(|anchor| anchor.contains("rig") && anchor.contains("OllamaBuilder"))
+    );
+    assert!(
+        descriptor
+            .crate_anchors
+            .iter()
+            .any(|anchor| anchor.contains("swarms_rs") && anchor.contains("AgentConfig"))
+    );
+    assert!(
+        descriptor
+            .crate_anchors
+            .iter()
+            .any(|anchor| anchor.contains("ollama_rs") && anchor.contains("Ollama"))
+    );
+    assert_eq!(descriptor.agents.len(), 9);
+
+    for kind in [
+        RuntimeAgentKind::Planner,
+        RuntimeAgentKind::Coding,
+        RuntimeAgentKind::Security,
+        RuntimeAgentKind::Infra,
+        RuntimeAgentKind::Research,
+        RuntimeAgentKind::Recovery,
+        RuntimeAgentKind::Validation,
+        RuntimeAgentKind::Memory,
+        RuntimeAgentKind::Execution,
+    ] {
+        let spec = descriptor
+            .agents
+            .iter()
+            .find(|agent| agent.kind == kind)
+            .expect("runtime agent spec should exist");
+        assert!(spec.streaming);
+        assert!(spec.async_execution);
+        assert!(spec.replay_compatible);
+        assert!(spec.memory_scope.contains(kind.as_str()));
+        assert!(!spec.prompt.is_empty());
+        assert!(!spec.tools.is_empty());
+    }
+
+    let models = descriptor.required_models();
+    assert!(models.contains(&"llama3.1:8b".to_string()));
+    assert!(models.contains(&"qwen2.5-coder:7b".to_string()));
+    assert!(models.contains(&"mistral".to_string()));
+}
+
+#[test]
+fn phase_30_model_router_selects_workload_specific_models() {
+    let coding = route_model(
+        "repair repository tests and generate a patch",
+        RuntimeAgentKind::Coding,
+    );
+    assert_eq!(coding.workload, ModelWorkload::Coding);
+    assert_eq!(coding.model, "qwen2.5-coder:7b");
+
+    let planning = route_model("plan a delegated workflow", RuntimeAgentKind::Planner);
+    assert_eq!(planning.workload, ModelWorkload::Planning);
+    assert_eq!(planning.model, "llama3.1:8b");
+
+    let security = route_model(
+        "validate sandbox policy for vulnerability",
+        RuntimeAgentKind::Security,
+    );
+    assert_eq!(security.workload, ModelWorkload::Security);
+    assert_eq!(security.model, "llama3.1:8b");
+
+    let fast = route_model("summarize status", RuntimeAgentKind::Memory);
+    assert_eq!(fast.workload, ModelWorkload::Lightweight);
+    assert_eq!(fast.model, "mistral");
+}
+
+#[test]
+fn ai_model_resolver_matches_installed_ollama_tags() {
+    let installed = vec![
+        "qwen2.5-coder:7b".to_string(),
+        "deepseek-r1:8b".to_string(),
+        "mistral:latest".to_string(),
+    ];
+    assert_eq!(
+        resolve_installed_model_name("qwen2.5-coder", installed.iter()),
+        Some("qwen2.5-coder:7b".into())
+    );
+    assert_eq!(
+        resolve_installed_model_name("deepseek-r1", installed.iter()),
+        Some("deepseek-r1:8b".into())
+    );
+    assert_eq!(
+        resolve_installed_model_name("mistral", installed.iter()),
+        Some("mistral:latest".into())
+    );
+    assert_eq!(
+        resolve_installed_model_name("missing-model", installed.iter()),
+        None
+    );
+}
+
+#[test]
+fn ai_model_resolver_uses_compatible_local_fallbacks() {
+    let installed = vec![
+        "llama3.1:8b".to_string(),
+        "phi4:latest".to_string(),
+        "qwen2.5:3b".to_string(),
+    ];
+    assert_eq!(
+        resolve_installed_model_name("llama3.3", installed.iter()),
+        Some("llama3.1:8b".into())
+    );
+    assert_eq!(
+        resolve_installed_model_name("mistral", installed.iter()),
+        Some("phi4:latest".into())
+    );
+    assert_eq!(
+        resolve_installed_model_name("deepseek-coder", installed.iter()),
+        Some("qwen2.5:3b".into())
+    );
+}
+
+#[test]
+fn ai_tool_requests_avoid_models_without_ollama_tool_support() {
+    assert_eq!(tool_capable_model_for("deepseek-r1:8b"), "llama3.1:8b");
+    assert_eq!(tool_capable_model_for("phi4:latest"), "llama3.1:8b");
+    assert_eq!(tool_capable_model_for("mistral"), "llama3.1:8b");
+    assert_eq!(tool_capable_model_for("llama3.1:8b"), "llama3.1:8b");
+    assert_eq!(
+        tool_capable_model_for("qwen2.5-coder:7b"),
+        "qwen2.5-coder:7b"
+    );
+}
+
+#[test]
+fn phase_30_swarms_encode_required_orchestration_patterns() {
+    let hierarchical = SwarmExecutionPlan::new(SwarmPattern::Hierarchical, "ship a runtime change");
+    assert_eq!(hierarchical.pattern, SwarmPattern::Hierarchical);
+    assert!(
+        hierarchical
+            .nodes
+            .iter()
+            .filter(|node| node.agent != RuntimeAgentKind::Planner)
+            .all(|node| node.depends_on.contains(&RuntimeAgentKind::Planner))
+    );
+    assert!(hierarchical.policy.cancellation);
+    assert!(hierarchical.policy.failure_isolation);
+    assert!(hierarchical.policy.trace_execution);
+
+    let parallel = SwarmExecutionPlan::new(SwarmPattern::Parallel, "investigate incident");
+    assert!(parallel.nodes.iter().all(|node| node.depends_on.is_empty()));
+
+    let voting = SwarmExecutionPlan::new(SwarmPattern::Voting, "approve risky remediation");
+    let planner = voting
+        .nodes
+        .iter()
+        .find(|node| node.agent == RuntimeAgentKind::Planner)
+        .expect("voting swarm should include planner consensus node");
+    assert!(planner.depends_on.contains(&RuntimeAgentKind::Security));
+    assert!(planner.depends_on.contains(&RuntimeAgentKind::Validation));
+
+    let recovery = SwarmExecutionPlan::new(SwarmPattern::Recovery, "repair failed execution");
+    assert_eq!(
+        recovery.nodes.first().unwrap().agent,
+        RuntimeAgentKind::Recovery
+    );
+    assert!(
+        recovery
+            .nodes
+            .windows(2)
+            .all(|pair| { pair[1].depends_on == vec![pair[0].agent] })
+    );
+}
+
+#[test]
+fn phase_30_coding_pipeline_covers_index_plan_execute_validate_repair() {
+    let plan = SwarmExecutionPlan::coding_pipeline("update repository feature");
+    let agents = plan.nodes.iter().map(|node| node.agent).collect::<Vec<_>>();
+    assert_eq!(
+        agents,
+        vec![
+            RuntimeAgentKind::Memory,
+            RuntimeAgentKind::Planner,
+            RuntimeAgentKind::Coding,
+            RuntimeAgentKind::Execution,
+            RuntimeAgentKind::Validation,
+            RuntimeAgentKind::Recovery,
+        ]
+    );
+    assert_eq!(plan.policy.retry_attempts, 3);
+    assert!(
+        plan.nodes
+            .iter()
+            .any(|node| node.task.contains("Index repository"))
+    );
+    assert!(
+        plan.nodes
+            .iter()
+            .any(|node| node.task.contains("repair loop"))
+    );
+}
 
 #[test]
 fn allowlist_accepts_read_only_infrastructure_commands() {
@@ -675,7 +886,7 @@ fn phase_15_ai_runtime_is_local_only_and_routes_models() {
     assert!(
         profiles
             .iter()
-            .any(|profile| profile.kind == AgentKind::Security && profile.model == "deepseek-r1:8b")
+            .any(|profile| profile.kind == AgentKind::Security && profile.model == "llama3.1:8b")
     );
     assert!(
         profiles

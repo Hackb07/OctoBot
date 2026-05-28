@@ -14,6 +14,12 @@ use crate::{
 const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
 const STREAM_TIMEOUT_SECS: u64 = 120;
 const REQUEST_TIMEOUT_SECS: u64 = 45;
+const PLANNING_MODEL: &str = "llama3.1:8b";
+const CODING_MODEL: &str = "qwen2.5-coder:7b";
+const DEEPSEEK_CODER_MODEL: &str = "deepseek-coder";
+const SECURITY_MODEL: &str = "llama3.1:8b";
+const LIGHTWEIGHT_MODEL: &str = "mistral";
+const TOOL_CAPABLE_MODEL: &str = "llama3.1:8b";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) enum AgentKind {
@@ -31,6 +37,323 @@ impl AgentKind {
             Self::Security => "security",
             Self::Utility => "utility",
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(crate) enum RuntimeAgentKind {
+    Planner,
+    Coding,
+    Security,
+    Infra,
+    Research,
+    Recovery,
+    Validation,
+    Memory,
+    Execution,
+}
+
+impl RuntimeAgentKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Planner => "planner",
+            Self::Coding => "coding",
+            Self::Security => "security",
+            Self::Infra => "infra",
+            Self::Research => "research",
+            Self::Recovery => "recovery",
+            Self::Validation => "validation",
+            Self::Memory => "memory",
+            Self::Execution => "execution",
+        }
+    }
+
+    pub(crate) fn profile_kind(self) -> AgentKind {
+        match self {
+            Self::Planner => AgentKind::Planning,
+            Self::Coding => AgentKind::Coding,
+            Self::Security => AgentKind::Security,
+            Self::Infra => AgentKind::Security,
+            Self::Research => AgentKind::Security,
+            Self::Recovery => AgentKind::Planning,
+            Self::Validation => AgentKind::Utility,
+            Self::Memory => AgentKind::Utility,
+            Self::Execution => AgentKind::Coding,
+        }
+    }
+
+    pub(crate) fn default_model(self) -> &'static str {
+        match self {
+            Self::Planner | Self::Recovery => PLANNING_MODEL,
+            Self::Coding | Self::Execution => CODING_MODEL,
+            Self::Security | Self::Infra | Self::Research => SECURITY_MODEL,
+            Self::Validation | Self::Memory => LIGHTWEIGHT_MODEL,
+        }
+    }
+
+    pub(crate) fn default_prompt(self) -> &'static str {
+        match self {
+            Self::Planner => {
+                "Decompose the objective into auditable steps, delegate to specialized agents, and preserve replay context."
+            }
+            Self::Coding => {
+                "Analyze repository context, generate minimal patches, run validation, and repair failures through bounded retries."
+            }
+            Self::Security => {
+                "Validate commands, plugins, policies, prompts, and patches for security risk before execution."
+            }
+            Self::Infra => {
+                "Reason about infrastructure state, incidents, service topology, and safe remediation paths."
+            }
+            Self::Research => {
+                "Collect evidence, compare signals, identify contradictions, and return sourced operational context."
+            }
+            Self::Recovery => {
+                "Classify failures, plan rollback or repair, checkpoint progress, and isolate broken execution branches."
+            }
+            Self::Validation => {
+                "Run acceptance gates, review tool output, check policy constraints, and produce final pass or fail decisions."
+            }
+            Self::Memory => {
+                "Compress context, retrieve scoped memory, persist snapshots, and prepare replay-compatible summaries."
+            }
+            Self::Execution => {
+                "Execute approved tools through the sandbox, stream telemetry, and return structured execution results."
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RuntimeToolBinding {
+    pub(crate) name: String,
+    pub(crate) capability: String,
+    pub(crate) risk_tier: String,
+}
+
+impl RuntimeToolBinding {
+    fn new(name: &str, capability: &str, risk_tier: &str) -> Self {
+        Self {
+            name: name.into(),
+            capability: capability.into(),
+            risk_tier: risk_tier.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RuntimeAgentSpec {
+    pub(crate) name: String,
+    pub(crate) kind: RuntimeAgentKind,
+    pub(crate) model: String,
+    pub(crate) provider: String,
+    pub(crate) prompt: String,
+    pub(crate) memory_scope: String,
+    pub(crate) tools: Vec<RuntimeToolBinding>,
+    pub(crate) streaming: bool,
+    pub(crate) async_execution: bool,
+    pub(crate) replay_compatible: bool,
+}
+
+impl RuntimeAgentSpec {
+    pub(crate) fn for_kind(kind: RuntimeAgentKind) -> Self {
+        Self {
+            name: format!("{}-agent", kind.as_str()),
+            kind,
+            model: kind.default_model().into(),
+            provider: "ollama-rs".into(),
+            prompt: kind.default_prompt().into(),
+            memory_scope: format!("agent:{}:memory", kind.as_str()),
+            tools: default_tools_for_agent(kind),
+            streaming: true,
+            async_execution: true,
+            replay_compatible: true,
+        }
+    }
+
+    pub(crate) fn agent_profile(&self) -> AgentProfile {
+        AgentProfile {
+            kind: self.kind.profile_kind(),
+            name: self.name.clone(),
+            model: self.model.clone(),
+            purpose: self.prompt.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RustNativeRuntimeDescriptor {
+    pub(crate) agent_runtime: String,
+    pub(crate) swarm_runtime: String,
+    pub(crate) local_provider: String,
+    pub(crate) crate_anchors: Vec<String>,
+    pub(crate) agents: Vec<RuntimeAgentSpec>,
+}
+
+impl RustNativeRuntimeDescriptor {
+    pub(crate) fn new() -> Self {
+        Self {
+            agent_runtime: "rig".into(),
+            swarm_runtime: "swarms_rs".into(),
+            local_provider: "ollama-rs".into(),
+            crate_anchors: rust_ai_crate_anchors(),
+            agents: runtime_agent_specs(),
+        }
+    }
+
+    pub(crate) fn required_models(&self) -> Vec<String> {
+        let mut models = self
+            .agents
+            .iter()
+            .map(|agent| agent.model.clone())
+            .collect::<Vec<_>>();
+        models.sort();
+        models.dedup();
+        models
+    }
+}
+
+pub(crate) fn rust_ai_crate_anchors() -> Vec<String> {
+    vec![
+        std::any::type_name::<rig::providers::ollama::OllamaBuilder>().into(),
+        std::any::type_name::<swarms_rs::structs::agent::AgentConfig>().into(),
+        std::any::type_name::<ollama_rs::Ollama>().into(),
+    ]
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum ModelWorkload {
+    Lightweight,
+    Planning,
+    Coding,
+    Security,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ModelRoutingDecision {
+    pub(crate) workload: ModelWorkload,
+    pub(crate) model: String,
+    pub(crate) reason: String,
+}
+
+pub(crate) fn route_model(task: &str, agent: RuntimeAgentKind) -> ModelRoutingDecision {
+    let lower = task.to_ascii_lowercase();
+    let workload = if matches!(
+        agent,
+        RuntimeAgentKind::Coding | RuntimeAgentKind::Execution
+    ) || lower.contains("repo")
+        || lower.contains("patch")
+        || lower.contains("code")
+        || lower.contains("test")
+    {
+        ModelWorkload::Coding
+    } else if matches!(agent, RuntimeAgentKind::Security | RuntimeAgentKind::Infra)
+        || lower.contains("vulnerability")
+        || lower.contains("sandbox")
+        || lower.contains("policy")
+        || lower.contains("incident")
+    {
+        ModelWorkload::Security
+    } else if matches!(
+        agent,
+        RuntimeAgentKind::Planner | RuntimeAgentKind::Recovery
+    ) || lower.contains("plan")
+        || lower.contains("delegate")
+        || lower.contains("workflow")
+    {
+        ModelWorkload::Planning
+    } else {
+        ModelWorkload::Lightweight
+    };
+
+    let model = match workload {
+        ModelWorkload::Lightweight => LIGHTWEIGHT_MODEL,
+        ModelWorkload::Planning => PLANNING_MODEL,
+        ModelWorkload::Coding => {
+            if lower.contains("deepseek") {
+                DEEPSEEK_CODER_MODEL
+            } else {
+                CODING_MODEL
+            }
+        }
+        ModelWorkload::Security => SECURITY_MODEL,
+    };
+
+    ModelRoutingDecision {
+        workload,
+        model: model.into(),
+        reason: format!(
+            "routed {} task for {} via Rust-native model router",
+            match workload {
+                ModelWorkload::Lightweight => "lightweight",
+                ModelWorkload::Planning => "planning",
+                ModelWorkload::Coding => "coding",
+                ModelWorkload::Security => "security",
+            },
+            agent.as_str()
+        ),
+    }
+}
+
+pub(crate) fn runtime_agent_specs() -> Vec<RuntimeAgentSpec> {
+    [
+        RuntimeAgentKind::Planner,
+        RuntimeAgentKind::Coding,
+        RuntimeAgentKind::Security,
+        RuntimeAgentKind::Infra,
+        RuntimeAgentKind::Research,
+        RuntimeAgentKind::Recovery,
+        RuntimeAgentKind::Validation,
+        RuntimeAgentKind::Memory,
+        RuntimeAgentKind::Execution,
+    ]
+    .into_iter()
+    .map(RuntimeAgentSpec::for_kind)
+    .collect()
+}
+
+fn default_tools_for_agent(kind: RuntimeAgentKind) -> Vec<RuntimeToolBinding> {
+    match kind {
+        RuntimeAgentKind::Planner => vec![
+            RuntimeToolBinding::new("workflow-delegate", "workflow:delegate", "low"),
+            RuntimeToolBinding::new("memory-retrieve", "memory:read", "low"),
+        ],
+        RuntimeAgentKind::Coding => vec![
+            RuntimeToolBinding::new("repository-index", "repo:index", "low"),
+            RuntimeToolBinding::new("semantic-code-search", "repo:read", "low"),
+            RuntimeToolBinding::new("patch-generate", "repo:write", "medium"),
+            RuntimeToolBinding::new("validation-run", "tool:execute", "medium"),
+        ],
+        RuntimeAgentKind::Security => vec![
+            RuntimeToolBinding::new("command-validator", "security:command", "low"),
+            RuntimeToolBinding::new("plugin-inspector", "security:plugin", "medium"),
+            RuntimeToolBinding::new("policy-gate", "security:policy", "low"),
+        ],
+        RuntimeAgentKind::Infra => vec![
+            RuntimeToolBinding::new("infra-discover", "infra:read", "low"),
+            RuntimeToolBinding::new("incident-analyze", "infra:incident", "medium"),
+        ],
+        RuntimeAgentKind::Research => vec![
+            RuntimeToolBinding::new("evidence-search", "research:read", "low"),
+            RuntimeToolBinding::new("source-rank", "research:rank", "low"),
+        ],
+        RuntimeAgentKind::Recovery => vec![
+            RuntimeToolBinding::new("checkpoint-restore", "workflow:checkpoint", "medium"),
+            RuntimeToolBinding::new("rollback-plan", "workflow:rollback", "high"),
+        ],
+        RuntimeAgentKind::Validation => vec![
+            RuntimeToolBinding::new("test-review", "validation:test", "low"),
+            RuntimeToolBinding::new("consensus-check", "validation:consensus", "low"),
+        ],
+        RuntimeAgentKind::Memory => vec![
+            RuntimeToolBinding::new("context-compress", "memory:compress", "low"),
+            RuntimeToolBinding::new("semantic-recall", "memory:read", "low"),
+            RuntimeToolBinding::new("snapshot-store", "memory:write", "medium"),
+        ],
+        RuntimeAgentKind::Execution => vec![
+            RuntimeToolBinding::new("sandbox-exec", "tool:execute", "high"),
+            RuntimeToolBinding::new("telemetry-stream", "observability:write", "low"),
+        ],
     }
 }
 
@@ -60,8 +383,8 @@ impl AgentProfile {
             AgentKind::Security => Self {
                 kind,
                 name: "security-agent".into(),
-                model: "deepseek-r1:8b".into(),
-                purpose: "security analysis, log analysis, anomaly detection, reasoning-heavy tasks, infrastructure diagnostics".into(),
+                model: "llama3.1:8b".into(),
+                purpose: "tool-capable security analysis, log analysis, anomaly detection, reasoning-heavy tasks, infrastructure diagnostics".into(),
             },
             AgentKind::Utility => Self {
                 kind,
@@ -257,6 +580,10 @@ impl AiClient {
             .collect();
         let now = now_ts();
         for model in required {
+            if map.contains_key(model) || resolve_installed_model_name(model, map.keys()).is_some()
+            {
+                continue;
+            }
             map.entry(model.clone()).or_insert(ModelHealth {
                 model: model.clone(),
                 installed: false,
@@ -360,14 +687,31 @@ impl AiClient {
         agent_name: &str,
         event_tx: Option<&mpsc::UnboundedSender<OpsEvent>>,
     ) -> Result<AiResponse> {
+        let requested_model = if tools.is_empty() {
+            model
+        } else {
+            tool_capable_model_for(model)
+        };
+        let resolved_model = self.resolve_model_name(requested_model).await?;
+        if resolved_model != model
+            && let Some(tx) = event_tx
+        {
+            let _ = tx.send(OpsEvent::NotificationRaised {
+                level: "info".into(),
+                message: format!(
+                    "resolved Ollama model `{model}` to installed tool-capable `{resolved_model}`"
+                ),
+                timestamp: now_ts(),
+            });
+        }
         let body = json!({
-            "model": model,
+            "model": resolved_model,
             "stream": true,
             "messages": messages,
             "tools": tools.iter().map(openai_tool).collect::<Vec<_>>(),
         });
         let response = self.send_with_retry("/api/chat", body).await?;
-        self.consume_chat_stream(response, model, agent_name, event_tx)
+        self.consume_chat_stream(response, &resolved_model, agent_name, event_tx)
             .await
     }
 
@@ -377,19 +721,22 @@ impl AiClient {
         agent_name: &str,
         event_tx: Option<&mpsc::UnboundedSender<OpsEvent>>,
     ) -> Result<AiResponse> {
+        let resolved_model = self.resolve_model_name(&self.profile.model).await?;
         let body = json!({
-            "model": self.profile.model,
+            "model": resolved_model,
             "stream": true,
             "prompt": prompt,
         });
         let response = self.send_with_retry("/api/generate", body).await?;
-        self.consume_generate_stream(response, agent_name, event_tx)
+        self.consume_generate_stream_with_model(response, &resolved_model, agent_name, event_tx)
             .await
     }
 
     pub(crate) async fn embeddings(&self, model: Option<&str>, input: &str) -> Result<Vec<f32>> {
+        let requested_model = model.unwrap_or(&self.profile.model);
+        let resolved_model = self.resolve_model_name(requested_model).await?;
         let body = json!({
-            "model": model.unwrap_or(&self.profile.model),
+            "model": resolved_model,
             "prompt": input,
         });
         let response = self
@@ -466,14 +813,46 @@ impl AiClient {
         agent_name: &str,
         event_tx: Option<&mpsc::UnboundedSender<OpsEvent>>,
     ) -> Result<AiResponse> {
-        self.consume_json_stream(
-            response,
-            &self.profile.model,
-            agent_name,
-            event_tx,
-            StreamKind::Generate,
-        )
-        .await
+        self.consume_generate_stream_with_model(response, &self.profile.model, agent_name, event_tx)
+            .await
+    }
+
+    async fn consume_generate_stream_with_model(
+        &self,
+        response: reqwest::Response,
+        model: &str,
+        agent_name: &str,
+        event_tx: Option<&mpsc::UnboundedSender<OpsEvent>>,
+    ) -> Result<AiResponse> {
+        self.consume_json_stream(response, model, agent_name, event_tx, StreamKind::Generate)
+            .await
+    }
+
+    async fn resolve_model_name(&self, requested: &str) -> Result<String> {
+        let installed = self.list_models().await.unwrap_or_default();
+        let installed_names = installed
+            .iter()
+            .map(|model| model.model.as_str())
+            .collect::<Vec<_>>();
+        if let Some(resolved) = resolve_installed_model_name(requested, installed_names.into_iter())
+        {
+            return Ok(resolved);
+        }
+        if let Ok(fallback) = env::var("OCTOBOT_OLLAMA_MODEL") {
+            let fallback = fallback.trim();
+            if !fallback.is_empty() && fallback != requested {
+                let installed = installed
+                    .iter()
+                    .map(|model| model.model.as_str())
+                    .collect::<Vec<_>>();
+                if let Some(resolved) =
+                    resolve_installed_model_name(fallback, installed.into_iter())
+                {
+                    return Ok(resolved);
+                }
+            }
+        }
+        Ok(requested.to_string())
     }
 
     async fn consume_json_stream(
@@ -645,14 +1024,68 @@ fn local_ollama_endpoint(endpoint: &str) -> Option<String> {
     if local { Some(trimmed) } else { None }
 }
 
+pub(crate) fn resolve_installed_model_name<I, S>(requested: &str, installed: I) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let requested = requested.trim();
+    if requested.is_empty() {
+        return None;
+    }
+    let installed = installed
+        .into_iter()
+        .map(|model| model.as_ref().to_string())
+        .collect::<Vec<_>>();
+    if installed.iter().any(|model| model == requested) {
+        return Some(requested.to_string());
+    }
+    for requested_base in compatible_model_bases(requested) {
+        if let Some(model) = installed.iter().find(|model| {
+            model
+                .split(':')
+                .next()
+                .map(|base| base == requested_base)
+                .unwrap_or(false)
+        }) {
+            return Some(model.clone());
+        }
+    }
+    None
+}
+
+fn compatible_model_bases(requested: &str) -> Vec<&str> {
+    let requested_base = requested.split(':').next().unwrap_or(requested);
+    match requested_base {
+        "llama3.3" => vec!["llama3.3", "llama3.1", "llama3"],
+        "mistral" => vec!["mistral", "phi4", "phi"],
+        "phi" => vec!["phi", "phi4"],
+        "qwen2.5-coder" => vec!["qwen2.5-coder", "qwen2.5"],
+        "deepseek-coder" => vec!["deepseek-coder", "qwen2.5-coder", "qwen2.5"],
+        "deepseek-r1" => vec!["deepseek-r1"],
+        _ => vec![requested_base],
+    }
+}
+
+pub(crate) fn tool_capable_model_for(requested: &str) -> &str {
+    let requested_base = requested.split(':').next().unwrap_or(requested).trim();
+    match requested_base {
+        "deepseek-r1" | "phi4" | "phi" | "mistral" => TOOL_CAPABLE_MODEL,
+        _ => requested,
+    }
+}
+
 fn parse_tool_call(value: &Value) -> Option<ToolCall> {
     let function = value.get("function")?;
     let name = function.get("name")?.as_str()?.to_string();
-    let raw_args = function
-        .get("arguments")
-        .and_then(Value::as_str)
-        .unwrap_or("{}");
-    let arguments = serde_json::from_str(raw_args).unwrap_or_else(|_| json!({}));
+    let arguments = match function.get("arguments") {
+        Some(Value::String(raw_args)) => {
+            serde_json::from_str(raw_args).unwrap_or_else(|_| json!({}))
+        }
+        Some(Value::Object(map)) => Value::Object(map.clone()),
+        Some(value) => value.clone(),
+        None => json!({}),
+    };
     Some(ToolCall {
         id: value
             .get("id")
