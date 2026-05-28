@@ -229,10 +229,9 @@ impl SecurityPolicy {
             .get("command")
             .and_then(serde_json::Value::as_str)
             .or_else(|| arguments.get("summary").and_then(serde_json::Value::as_str))
+            && let Some(reason) = Self::detect_prompt_attack(text)
         {
-            if let Some(reason) = Self::detect_prompt_attack(text) {
-                return Err(format!("blocked malicious tool arguments: {reason}"));
-            }
+            return Err(format!("blocked malicious tool arguments: {reason}"));
         }
         Ok(())
     }
@@ -662,16 +661,16 @@ impl SecurityTooling {
                 std::env::var("OCTOBOT_KUBERNETES_URL").ok(),
             ),
         ] {
-            if let Some(value) = value {
-                if is_remote_url(&value) {
-                    findings.push(SecurityFinding {
-                        id: format!("config-{key}"),
-                        severity: "medium".into(),
-                        title: "External service endpoint configured".into(),
-                        evidence: format!("{key}={}", redact_sensitive(&value)),
-                        recommendation: "use localhost endpoints for offline deployments".into(),
-                    });
-                }
+            if let Some(value) = value
+                && is_remote_url(&value)
+            {
+                findings.push(SecurityFinding {
+                    id: format!("config-{key}"),
+                    severity: "medium".into(),
+                    title: "External service endpoint configured".into(),
+                    evidence: format!("{key}={}", redact_sensitive(&value)),
+                    recommendation: "use localhost endpoints for offline deployments".into(),
+                });
             }
         }
         if state.current_role == UserRole::Admin {
@@ -778,17 +777,17 @@ impl SecurityTooling {
             if let Some(id) = node.get("id").and_then(|id| id.as_str()) {
                 ids.push(id.to_string());
             }
-            if let Some(command) = node.get("command").and_then(|cmd| cmd.as_str()) {
-                if let Err(error) = SecurityPolicy::validate_command(command) {
-                    findings.push(SecurityFinding {
-                        id: format!("workflow-{name}-command"),
-                        severity: "high".into(),
-                        title: "Workflow command violates sandbox policy".into(),
-                        evidence: error,
-                        recommendation:
-                            "replace with an allowlisted read-only command or approval gate".into(),
-                    });
-                }
+            if let Some(command) = node.get("command").and_then(|cmd| cmd.as_str())
+                && let Err(error) = SecurityPolicy::validate_command(command)
+            {
+                findings.push(SecurityFinding {
+                    id: format!("workflow-{name}-command"),
+                    severity: "high".into(),
+                    title: "Workflow command violates sandbox policy".into(),
+                    evidence: error,
+                    recommendation:
+                        "replace with an allowlisted read-only command or approval gate".into(),
+                });
             }
             let kind = node
                 .get("kind")

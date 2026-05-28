@@ -12,6 +12,7 @@ mod plugins;
 mod remediation;
 mod reports;
 mod runtime;
+mod runtime_service;
 mod security;
 mod trace;
 mod ui;
@@ -41,7 +42,7 @@ fn load_dotenv() {
         if let Some((key, value)) = trimmed.split_once('=') {
             let k = key.trim();
             let v = value.trim().trim_matches(&['"', '\''][..]);
-            if !k.is_empty() && !std::env::var(k).is_ok() {
+            if !k.is_empty() && std::env::var(k).is_err() {
                 unsafe {
                     std::env::set_var(k, v);
                 }
@@ -60,6 +61,12 @@ async fn main() -> Result<()> {
         tracing_subscriber::fmt().with_writer(std::io::sink).init();
     }
 
+    if std::env::var("OCTOBOT_RUNTIME_ONLY").is_ok() {
+        return runtime_service::serve_runtime_service()
+            .await
+            .context("running OctoBot runtime service only");
+    }
+
     let (tx, rx) = watch::channel(OpsState::seed());
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     tokio::spawn(ops_runtime(tx, event_rx, event_tx.clone()));
@@ -71,6 +78,11 @@ async fn main() -> Result<()> {
             if let Err(error) = api::serve_api(rx, event_tx).await {
                 debug!(%error, "control API exited");
             }
+        }
+    });
+    tokio::spawn(async move {
+        if let Err(error) = runtime_service::serve_runtime_service().await {
+            debug!(%error, "runtime service exited");
         }
     });
 

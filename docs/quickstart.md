@@ -7,7 +7,7 @@ This guide gets OctoBot running locally and walks through a small test path. For
 - Rust stable toolchain.
 - Linux terminal, ideally 120 columns or wider.
 - Optional: Ollama for local AI agent tasks.
-- Optional: Docker, kubectl, PostgreSQL, Qdrant, Prometheus, Loki, or OpenSearch for integrations.
+- Optional: Ollama, Docker, kubectl, PostgreSQL, Qdrant, Prometheus, Loki, OpenSearch, Node.js, or npm for integrations and frontend work.
 
 Install Rust:
 
@@ -36,14 +36,14 @@ cargo run
 Expected tests:
 
 ```text
-37 passed
+42 passed
 ```
 
 Press `/` for commands, `1`-`9` for views, `Tab` to cycle views, `?` for help, and `q` to quit.
 
 ## Optional Ollama Setup
 
-OctoBot's current AI task runtime is Ollama-focused.
+OctoBot uses Ollama for local Rust-side agent tasks. The Python orchestrator also supports Ollama, OpenAI, Anthropic, and Groq-compatible provider routing.
 
 ```bash
 ollama pull llama3.1:8b
@@ -156,6 +156,45 @@ While OctoBot is running:
 curl http://127.0.0.1:7878/health
 curl http://127.0.0.1:7878/api/state
 curl http://127.0.0.1:7878/api/plugins
+```
+
+## Autonomous Orchestrator Smoke Test
+
+Start the Python orchestrator:
+
+```bash
+. .venv/bin/activate
+uvicorn backend.octobot_orchestrator.main:app --host 127.0.0.1 --port 8787
+```
+
+Create and run a dry-run coding task:
+
+```bash
+curl -s http://127.0.0.1:8787/api/tasks \
+  -H 'content-type: application/json' \
+  -d '{"goal":"summarize repository","repository":{"path":"."},"dry_run":true}'
+```
+
+Use the returned `task_id`:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/tasks/<task_id>/run
+curl -s http://127.0.0.1:8787/api/tasks/<task_id>/observability
+curl -s http://127.0.0.1:8787/metrics
+```
+
+## Production Verification
+
+Run the full local production check set:
+
+```bash
+cargo check
+cargo test
+cargo clippy --all-targets -- -D warnings
+PYTHONPATH=. .venv/bin/pytest
+PYTHONPATH=. .venv/bin/ruff check backend tests
+cd frontend && npm ci && npm run build && npm audit
+cd frontend/src-tauri && cargo check
 ```
 
 ## Next Steps

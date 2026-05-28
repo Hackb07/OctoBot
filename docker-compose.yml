@@ -1,0 +1,99 @@
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: docker/orchestrator.Dockerfile
+    environment:
+      OCTOBOT_RUNTIME_URL: ws://runtime:7879
+      OCTOBOT_MEMORY_BACKEND: sqlite
+      OCTOBOT_SERVICE_TOKEN: ${OCTOBOT_SERVICE_TOKEN:?set OCTOBOT_SERVICE_TOKEN}
+    ports:
+      - "8787:8787"
+    volumes:
+      - .:/workspace:ro
+      - octobot-state:/app/.octobot
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    profiles: ["dev", "single-node"]
+
+  runtime:
+    build:
+      context: .
+      dockerfile: docker/runtime.Dockerfile
+    environment:
+      OCTOBOT_RUNTIME_ONLY: "1"
+      OCTOBOT_RUNTIME_ADDR: 0.0.0.0:7879
+    ports:
+      - "7879:7879"
+    volumes:
+      - .:/workspace:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7879/runtime/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    profiles: ["dev", "single-node"]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    environment:
+      VITE_OCTOBOT_API: http://localhost:8787
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    profiles: ["dev", "single-node"]
+
+  proxy:
+    image: nginx:1.27-alpine
+    ports:
+      - "8443:443"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${OCTOBOT_TLS_CERT:?set OCTOBOT_TLS_CERT}:/etc/octobot/tls.crt:ro
+      - ${OCTOBOT_TLS_KEY:?set OCTOBOT_TLS_KEY}:/etc/octobot/tls.key:ro
+    depends_on:
+      - orchestrator
+    profiles: ["single-node", "distributed"]
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: octobot
+    ports:
+      - "5432:5432"
+    volumes:
+      - octobot-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d octobot"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    profiles: ["single-node", "distributed"]
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.1
+    ports:
+      - "6333:6333"
+    volumes:
+      - octobot-qdrant:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:6333/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    profiles: ["single-node", "distributed"]
+
+volumes:
+  octobot-state:
+  octobot-postgres:
+  octobot-qdrant:

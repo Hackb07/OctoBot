@@ -26,6 +26,7 @@ use crate::{
         UserRole, WorkspaceArtifact,
     },
     reports::write_report_json,
+    runtime_service::{RuntimeSmokeKind, spawn_runtime_smoke},
     utils::{next_agent_name, next_id, now_ts},
 };
 
@@ -1381,7 +1382,7 @@ impl App {
     fn handle_chat_file_request(&mut self, request: ChatFileRequest, timestamp: String) {
         match write_chat_file(&request) {
             Ok(path) => {
-                let bytes = request.content.as_bytes().len();
+                let bytes = request.content.len();
                 let _ = self.event_tx.send(OpsEvent::WorkspaceArtifactRecorded {
                     artifact: WorkspaceArtifact {
                         id: next_id("artifact"),
@@ -1466,6 +1467,15 @@ impl App {
                 ),
                 timestamp,
             });
+        } else if command == "runtime smoke" {
+            self.selected_nav = 8;
+            spawn_runtime_smoke(RuntimeSmokeKind::ListDirectory, self.event_tx.clone());
+        } else if command == "runtime docker-smoke" {
+            self.selected_nav = 8;
+            spawn_runtime_smoke(RuntimeSmokeKind::DockerPolicy, self.event_tx.clone());
+        } else if command == "runtime cancel-smoke" {
+            self.selected_nav = 8;
+            spawn_runtime_smoke(RuntimeSmokeKind::Cancellation, self.event_tx.clone());
         } else if command.starts_with("investigate") {
             self.selected_nav = 2;
             let incident_id = command
@@ -1497,22 +1507,19 @@ impl App {
                 task: task.clone(),
                 timestamp: now_ts(),
             });
-            self.activity.push(
-                format!(
-                    "Multi-agent task '{}' delegated to planner {planner_id}",
-                    &task[..task.len().min(60)]
-                )
-                .into(),
-            );
+            self.activity.push(format!(
+                "Multi-agent task '{}' delegated to planner {planner_id}",
+                &task[..task.len().min(60)]
+            ));
         } else if command.starts_with("agent spawn") || command.starts_with("spawn-agent") {
             self.selected_nav = 1;
             let role = command
                 .strip_prefix("agent spawn ")
                 .or_else(|| command.strip_prefix("spawn-agent "))
-                .and_then(|r| match r.trim() {
-                    "planner" => Some(AgentRole::Planner),
-                    "executor" => Some(AgentRole::Executor),
-                    _ => Some(AgentRole::Research),
+                .map(|r| match r.trim() {
+                    "planner" => AgentRole::Planner,
+                    "executor" => AgentRole::Executor,
+                    _ => AgentRole::Research,
                 })
                 .unwrap_or(AgentRole::Research);
             let agent_id = next_agent_name();
@@ -1812,10 +1819,10 @@ impl App {
             self.selected_nav = 1;
             let role = command
                 .strip_prefix("spawn-agent ")
-                .and_then(|r| match r.trim() {
-                    "planner" => Some(AgentRole::Planner),
-                    "executor" => Some(AgentRole::Executor),
-                    _ => Some(AgentRole::Research),
+                .map(|r| match r.trim() {
+                    "planner" => AgentRole::Planner,
+                    "executor" => AgentRole::Executor,
+                    _ => AgentRole::Research,
                 })
                 .unwrap_or(AgentRole::Research);
             let agent_id = next_agent_name();

@@ -406,7 +406,8 @@ fn ensure_acyclic(definition: &WorkflowDefinition) -> Result<()> {
     }
     let mut queue = indegree
         .iter()
-        .filter_map(|(node, count)| (*count == 0).then(|| node.clone()))
+        .filter(|&(_node, count)| *count == 0)
+        .map(|(node, _count)| node.clone())
         .collect::<VecDeque<_>>();
     let mut visited = 0;
     while let Some(node) = queue.pop_front() {

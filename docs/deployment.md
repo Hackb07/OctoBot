@@ -10,6 +10,8 @@ This reference covers production-style setup and optional backends. For hands-on
 | OS | Linux | Linux (systemd journal access) |
 | Terminal | 120×30 | 160×40+ (256 color) |
 | RAM | 128 MB (no AI) | 2 GB+ (with AI) |
+| Node.js | 22+ | 22 LTS for frontend builds |
+| Docker Compose | v2 | v2 with profiles |
 
 ## Quick Install
 
@@ -37,8 +39,11 @@ That's it. OctoBot runs immediately with zero configuration — all optional fea
 - [ ] `git clone https://github.com/your-org/OctoBot.git`
 - [ ] `cd OctoBot`
 - [ ] `cargo build --release` (first build: ~3 min)
-- [ ] `cargo test` — verify 37 tests pass
+- [ ] `cargo test` — verify 42 Rust tests pass
 - [ ] `cargo check` — verify zero compilation errors
+- [ ] `cargo clippy --all-targets -- -D warnings` — verify strict Rust linting
+- [ ] `PYTHONPATH=. .venv/bin/pytest` — verify Python orchestrator tests
+- [ ] `PYTHONPATH=. .venv/bin/ruff check backend tests` — verify Python linting
 
 ### 3. Run Without Any Backend
 
@@ -126,11 +131,20 @@ Each backend is independently optional. OctoBot runs without any of them.
 | `OCTOBOT_QDRANT_RETRY_ATTEMPTS` | Qdrant retry count | `3` |
 | `OCTOBOT_AI_MAX_TURNS` | Max AI reasoning turns | `5` |
 | `OCTOBOT_TRACE` | Enable tracing output | — |
+| `OCTOBOT_SERVICE_TOKEN` | Python orchestrator service token | — |
+| `OCTOBOT_TLS_CERT` | TLS certificate path for Compose proxy | — |
+| `OCTOBOT_TLS_KEY` | TLS key path for Compose proxy | — |
+| `OCTOBOT_RUNTIME_URL` | Runtime service URL used by orchestrator | `ws://runtime:7879` |
 
 ### 6. Verify Everything Works
 
-- [ ] `cargo test` → 37 passed
-- [ ] `cargo check` → zero errors (warnings are expected for unused pub items)
+- [ ] `cargo test` → 42 passed
+- [ ] `cargo check` → zero errors
+- [ ] `cargo clippy --all-targets -- -D warnings` → zero warnings
+- [ ] `PYTHONPATH=. .venv/bin/pytest` → 23 passed
+- [ ] `PYTHONPATH=. .venv/bin/ruff check backend tests` → all checks passed
+- [ ] `cd frontend && npm ci && npm run build && npm audit` → build passes and 0 vulnerabilities
+- [ ] `cd frontend/src-tauri && cargo check` → desktop shell compiles
 - [ ] Launch with `./target/release/OctoBot` → TUI shows dashboard
 - [ ] Press `?` → help overlay appears
 - [ ] `/exec uptime` → command runs
@@ -140,6 +154,51 @@ Each backend is independently optional. OctoBot runs without any of them.
 - [ ] `/tasks-report` → task lifecycle report appears in Reports
 - [ ] `/replay start` then `/replay step` → timeline advances
 - [ ] `curl http://localhost:7878/health` → API online
+
+## Production Compose Deployment
+
+Copy and edit the production environment template:
+
+```bash
+cp config/production.env.example .env.production
+```
+
+Required values:
+
+| Variable | Purpose |
+|----------|---------|
+| `OCTOBOT_SERVICE_TOKEN` | Service-to-service token for orchestrator endpoints |
+| `OCTOBOT_TLS_CERT` | TLS certificate mounted into nginx proxy |
+| `OCTOBOT_TLS_KEY` | TLS private key mounted into nginx proxy |
+| `POSTGRES_PASSWORD` | PostgreSQL password |
+
+Validate Compose config before deployment:
+
+```bash
+set -a
+. ./.env.production
+set +a
+docker compose --profile single-node config
+```
+
+Start single-node services:
+
+```bash
+docker compose --profile single-node up -d --build
+```
+
+Production surfaces:
+
+| Service | Port | Health |
+|---------|------|--------|
+| Orchestrator | `8787` | `GET /health` |
+| Runtime | `7879` | `GET /runtime/health` |
+| Frontend | `8080` | `GET /health` |
+| TLS proxy | `8443` | nginx reverse proxy |
+| PostgreSQL | `5432` | `pg_isready` |
+| Qdrant | `6333` | `GET /healthz` |
+
+The frontend Dockerfile builds static assets with `npm ci && npm run build` and serves them with nginx. The orchestrator and runtime images run as non-root users and include healthchecks.
 
 ## All Tasks — Complete Command Reference
 

@@ -1,6 +1,6 @@
 # Security UI Test Guide
 
-Use this guide to verify the Phase 13 security dashboard in OctoBot.
+Use this guide to verify the security dashboard in OctoBot.
 
 ## 1. Start OctoBot
 
@@ -23,7 +23,7 @@ Inside the OctoBot UI:
 2. Type:
 
 ```text
-exec rm -rf /tmp/test
+/exec rm -rf /tmp/test
 ```
 
 3. Press `Enter`.
@@ -92,7 +92,7 @@ If `Blocked` stays at `0`:
 - Run the blocked command again:
 
 ```text
-exec rm -rf /tmp/test
+/exec rm -rf /tmp/test
 ```
 
 - Then return to Settings with `9`.
@@ -100,3 +100,23 @@ exec rm -rf /tmp/test
 If the UI is hard to read:
 
 - Resize the terminal to at least 120 columns wide.
+
+## Production Security Checks
+
+Before deployment, run:
+
+```bash
+cargo clippy --all-targets -- -D warnings
+PYTHONPATH=. .venv/bin/pytest
+PYTHONPATH=. .venv/bin/ruff check backend tests
+cd frontend && npm audit
+```
+
+For Compose deployments, set these values before `docker compose up`:
+
+```bash
+export OCTOBOT_SERVICE_TOKEN="<long-random-token>"
+export OCTOBOT_TLS_CERT="/path/to/tls.crt"
+export OCTOBOT_TLS_KEY="/path/to/tls.key"
+export POSTGRES_PASSWORD="<strong-password>"
+```

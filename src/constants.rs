@@ -69,7 +69,7 @@ pub(crate) fn syscall_limit() -> usize {
         .unwrap_or(DEFAULT_SYSCALL_LIMIT)
 }
 
-pub(crate) const COMMAND_SUGGESTIONS: [&str; 50] = [
+pub(crate) const COMMAND_SUGGESTIONS: [&str; 53] = [
     "multi-agent Assess Ollama readiness and report findings",
     "investigate local_model_health",
     "spawn-agent planner",
@@ -96,6 +96,9 @@ pub(crate) const COMMAND_SUGGESTIONS: [&str; 50] = [
     "plugin disable workflow-rca",
     "plugin add runbook-index integration",
     "runtime set agent-remote remote ssh://research-node-01",
+    "runtime smoke",
+    "runtime docker-smoke",
+    "runtime cancel-smoke",
     "graph link deploy-1188 correlates-with inc-042",
     "sandbox policy operator restart",
     "sandbox policy admin rollback",

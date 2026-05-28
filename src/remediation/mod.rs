@@ -118,9 +118,10 @@ impl RemediationEngine {
             || command.starts_with("docker restart")
         {
             RiskLevel::High
-        } else if command.starts_with("kubectl scale") {
-            RiskLevel::Medium
-        } else if command.starts_with("systemctl start") || command.starts_with("systemctl stop") {
+        } else if command.starts_with("kubectl scale")
+            || command.starts_with("systemctl start")
+            || command.starts_with("systemctl stop")
+        {
             RiskLevel::Medium
         } else {
             RiskLevel::Low
@@ -234,7 +235,7 @@ impl RemediationEngine {
                 WorkflowNode {
                     id: "diagnose".into(),
                     kind: WorkflowNodeKind::Command,
-                    command: Some(format!("systemctl --no-pager --failed")),
+                    command: Some("systemctl --no-pager --failed".to_string()),
                     agent: None,
                     depends_on: vec![],
                     retry: Default::default(),

@@ -1,0 +1,41 @@
+{
+  "services": [
+    {"name": "orchestrator", "component": "backend.octobot_orchestrator.main", "port": 8787},
+    {"name": "runtime", "component": "src/runtime_service.rs", "port": 7879},
+    {"name": "memory", "component": "backend.octobot_orchestrator.memory", "backend": "sqlite|chroma"},
+    {"name": "rag", "component": "backend.octobot_orchestrator.rag"},
+    {"name": "planning", "component": "backend.octobot_orchestrator.agents.graph"},
+    {"name": "research", "component": "backend.octobot_orchestrator.agents"},
+    {"name": "execution", "component": "backend.octobot_orchestrator.tools.execution"},
+    {"name": "indexing", "component": "backend.octobot_orchestrator.indexer.repository"},
+    {"name": "workflow", "component": "backend.octobot_orchestrator.workflows.autonomous_loop"},
+    {"name": "sandbox", "component": "backend.octobot_orchestrator.runtime.policy"},
+    {"name": "terminal", "component": "backend.octobot_orchestrator.tools.execution"},
+    {"name": "filesystem", "component": "backend.octobot_orchestrator.tools.filesystem"},
+    {"name": "git", "component": "backend.octobot_orchestrator.tools.git_tools"},
+    {"name": "monitoring", "component": "backend.octobot_orchestrator.main:/api/tasks/{task_id}/observability"},
+    {"name": "frontend", "component": "frontend", "port": 5173}
+  ],
+  "security": {
+    "auth": "service-token",
+    "service_token_env": "OCTOBOT_SERVICE_TOKEN",
+    "rbac_propagation": true,
+    "tls_ready": true,
+    "tls": {
+      "cert_path_env": "OCTOBOT_TLS_CERT",
+      "key_path_env": "OCTOBOT_TLS_KEY",
+      "termination": "reverse-proxy"
+    },
+    "audit_retention_days": 30
+  },
+  "healthchecks": {
+    "orchestrator": "GET /health",
+    "runtime": "GET /runtime/health",
+    "frontend": "GET /"
+  },
+  "scaling": {
+    "indexing_workers": 1,
+    "retrieval_workers": 1,
+    "execution_workers": 1
+  }
+}

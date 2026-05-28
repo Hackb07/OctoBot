@@ -78,21 +78,20 @@ impl InfraIntegrations {
             });
 
         // Container → pod: link docker containers to kubernetes pods by name prefix
-        if let Some(containers) = by_kind.get("docker-container") {
-            if let Some(pods) = by_kind.get("kubernetes-pod") {
-                for container in containers {
-                    let container_base =
-                        container.name.split('-').next().unwrap_or(&container.name);
-                    for pod in pods {
-                        if pod.name.starts_with(container_base) {
-                            edges.push(KnowledgeEdge {
-                                from: container.name.clone(),
-                                relation: "runs-on".into(),
-                                to: pod.name.clone(),
-                                weight: 85,
-                                timestamp: crate::utils::now_ts(),
-                            });
-                        }
+        if let Some(containers) = by_kind.get("docker-container")
+            && let Some(pods) = by_kind.get("kubernetes-pod")
+        {
+            for container in containers {
+                let container_base = container.name.split('-').next().unwrap_or(&container.name);
+                for pod in pods {
+                    if pod.name.starts_with(container_base) {
+                        edges.push(KnowledgeEdge {
+                            from: container.name.clone(),
+                            relation: "runs-on".into(),
+                            to: pod.name.clone(),
+                            weight: 85,
+                            timestamp: crate::utils::now_ts(),
+                        });
                     }
                 }
             }
@@ -121,23 +120,22 @@ impl InfraIntegrations {
             if node.kind == "service" || node.kind == "deployment" {
                 let svc_name = node.name.split('-').next().unwrap_or(&node.name);
                 for db_node in nodes {
-                    if db_node.kind == "database" || db_node.kind == "vector-db" {
-                        if db_node.name.contains(svc_name)
+                    if (db_node.kind == "database" || db_node.kind == "vector-db")
+                        && (db_node.name.contains(svc_name)
                             || svc_name.contains(
-                                &db_node
+                                db_node
                                     .name
                                     .trim_end_matches("-primary")
                                     .trim_end_matches("-vector"),
-                            )
-                        {
-                            edges.push(KnowledgeEdge {
-                                from: node.name.clone(),
-                                relation: "connects-to".into(),
-                                to: db_node.name.clone(),
-                                weight: 80,
-                                timestamp: crate::utils::now_ts(),
-                            });
-                        }
+                            ))
+                    {
+                        edges.push(KnowledgeEdge {
+                            from: node.name.clone(),
+                            relation: "connects-to".into(),
+                            to: db_node.name.clone(),
+                            weight: 80,
+                            timestamp: crate::utils::now_ts(),
+                        });
                     }
                 }
             }
@@ -178,7 +176,7 @@ impl InfraIntegrations {
             .context("decoding OpenSearch response")
     }
 
-    pub(crate) async fn enrich_from_loki_and_opensearch(&self, nodes: &mut Vec<InfraNode>) {
+    pub(crate) async fn enrich_from_loki_and_opensearch(&self, nodes: &mut [InfraNode]) {
         if let Err(error) = self.enrich_from_loki(nodes).await {
             tracing::warn!(%error, "Loki enrichment failed");
         }
@@ -187,7 +185,7 @@ impl InfraIntegrations {
         }
     }
 
-    async fn enrich_from_loki(&self, nodes: &mut Vec<InfraNode>) -> Result<()> {
+    async fn enrich_from_loki(&self, nodes: &mut [InfraNode]) -> Result<()> {
         let Some(base_url) = &self.loki_url else {
             return Ok(());
         };
@@ -198,22 +196,19 @@ impl InfraIntegrations {
                 base_url.trim_end_matches('/'),
                 urlencoding(&query)
             );
-            if let Ok(value) = get_json(&url).await {
-                if let Some(data) = value.get("data") {
-                    if let Some(results) = data.get("result") {
-                        if let Some(results_arr) = results.as_array() {
-                            if !results_arr.is_empty() {
-                                tracing::debug!(node = %node.name, "found Loki logs");
-                            }
-                        }
-                    }
-                }
+            if let Ok(value) = get_json(&url).await
+                && let Some(data) = value.get("data")
+                && let Some(results) = data.get("result")
+                && let Some(results_arr) = results.as_array()
+                && !results_arr.is_empty()
+            {
+                tracing::debug!(node = %node.name, "found Loki logs");
             }
         }
         Ok(())
     }
 
-    async fn enrich_from_opensearch(&self, nodes: &mut Vec<InfraNode>) -> Result<()> {
+    async fn enrich_from_opensearch(&self, nodes: &mut [InfraNode]) -> Result<()> {
         let Some(base_url) = &self.opensearch_url else {
             return Ok(());
         };
@@ -225,10 +220,10 @@ impl InfraIntegrations {
                 "size": 1
             });
             let url = format!("{}/_search", base_url.trim_end_matches('/'));
-            if let Ok(response) = reqwest::Client::new().post(&url).json(&body).send().await {
-                if response.status().is_success() {
-                    tracing::debug!(node = %node.name, "found OpenSearch data");
-                }
+            if let Ok(response) = reqwest::Client::new().post(&url).json(&body).send().await
+                && response.status().is_success()
+            {
+                tracing::debug!(node = %node.name, "found OpenSearch data");
             }
         }
         Ok(())

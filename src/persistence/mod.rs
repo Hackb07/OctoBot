@@ -89,15 +89,15 @@ impl PersistenceRuntime {
     }
 
     pub(crate) async fn persist_event(&self, event: &OpsEvent, state: &OpsState) {
-        if let Some(postgres) = &self.postgres {
-            if let Err(error) = postgres.persist_event(event, state).await {
-                warn!(%error, "failed to persist OpsEvent");
-            }
+        if let Some(postgres) = &self.postgres
+            && let Err(error) = postgres.persist_event(event, state).await
+        {
+            warn!(%error, "failed to persist OpsEvent");
         }
-        if let Some(memory) = &self.memory {
-            if let Err(error) = memory.index_event(event).await {
-                warn!(%error, "failed to index semantic operational memory");
-            }
+        if let Some(memory) = &self.memory
+            && let Err(error) = memory.index_event(event).await
+        {
+            warn!(%error, "failed to index semantic operational memory");
         }
     }
 

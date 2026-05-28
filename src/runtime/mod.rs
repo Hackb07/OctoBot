@@ -368,8 +368,10 @@ pub(crate) async fn ops_runtime(
                         ..
                     } => {
                         // Check if this completes a pending workflow node
-                        if let Some((wf_id, node_id, _cmd)) = pending_workflow_nodes.remove(id.as_str()) {
-                            if let Some(wf) = dag_workflows.iter_mut().find(|w| w.id == wf_id) {
+                        if let Some((wf_id, node_id, _cmd)) =
+                            pending_workflow_nodes.remove(id.as_str())
+                            && let Some(wf) = dag_workflows.iter_mut().find(|w| w.id == wf_id)
+                        {
                                 if *success {
                                     let _ = wf.mark_succeeded(&node_id);
                                     tracing::info!(workflow_id = %wf_id, %node_id, "workflow command node succeeded");
@@ -400,18 +402,17 @@ pub(crate) async fn ops_runtime(
                                         timestamp: now_ts(),
                                     });
                                     // Check for rollback
-                                    if let Some(node) = wf.get_node(&node_id).cloned() {
-                                        if let Some(rollback_target) = node.rollback {
-                                            let _ = wf.mark_for_rollback(&rollback_target);
-                                            let _ = event_tx.send(OpsEvent::WorkflowNodeCompleted {
-                                                workflow_id: wf_id.clone(),
-                                                node_id: rollback_target,
-                                                timestamp: now_ts(),
-                                            });
-                                        }
+                                    if let Some(node) = wf.get_node(&node_id).cloned()
+                                        && let Some(rollback_target) = node.rollback
+                                    {
+                                        let _ = wf.mark_for_rollback(&rollback_target);
+                                        let _ = event_tx.send(OpsEvent::WorkflowNodeCompleted {
+                                            workflow_id: wf_id.clone(),
+                                            node_id: rollback_target,
+                                            timestamp: now_ts(),
+                                        });
                                     }
                                 }
-                            }
                         }
                     }
                     OpsEvent::WorkflowNodeCompleted {
@@ -501,7 +502,7 @@ fn client_for_role<'a>(clients: &'a [AiClient], role: &AgentRole) -> Option<&'a 
         .or_else(|| clients.first())
 }
 
-fn client_for_kind<'a>(clients: &'a [AiClient], kind: AgentKind) -> Option<&'a AiClient> {
+fn client_for_kind(clients: &[AiClient], kind: AgentKind) -> Option<&AiClient> {
     clients
         .iter()
         .find(|client| client.profile().kind == kind)
@@ -1096,7 +1097,7 @@ async fn handle_planner_task(
                             .get("executor_name")
                             .and_then(Value::as_str)
                             .map(|s| s.to_string())
-                            .unwrap_or_else(|| next_sub_agent_name());
+                            .unwrap_or_else(next_sub_agent_name);
                         sub_tasks.push((desc.clone(), exec_name.clone()));
                         history.push(ToolCallResult {
                             call: tc.clone(),
@@ -1533,7 +1534,7 @@ fn create_incident_dag(incident_id: String) -> DagWorkflowRuntime {
 }
 
 async fn step_dag_workflows(
-    workflows: &mut Vec<DagWorkflowRuntime>,
+    workflows: &mut [DagWorkflowRuntime],
     state: &OpsState,
     event_tx: &mpsc::UnboundedSender<OpsEvent>,
     _ai_clients: &[AiClient],
@@ -1568,7 +1569,7 @@ async fn step_dag_workflows(
                     pending_nodes.insert(cmd_id, (wf_id.clone(), node_id.clone(), cmd));
                 }
                 WorkflowNodeKind::AgentTask => {
-                    let agent_name = node.agent.clone().unwrap_or_else(|| next_sub_agent_name());
+                    let agent_name = node.agent.clone().unwrap_or_else(next_sub_agent_name);
                     let _ = event_tx.send(OpsEvent::AgentSpawned {
                         name: agent_name.clone(),
                         role: AgentRole::Research,
@@ -1692,19 +1693,17 @@ fn build_condition_context(state: &OpsState) -> HashMap<String, String> {
 fn skip_downstream_nodes(wf: &mut DagWorkflowRuntime, skipped_node: &str) {
     let node_ids: Vec<String> = wf.node_states.keys().cloned().collect();
     for id in &node_ids {
-        if let Some(node) = wf.get_node(id).cloned() {
-            if node.depends_on.contains(&skipped_node.to_string())
-                && node.depends_on.iter().all(|dep| {
-                    wf.node_states
-                        .get(dep)
-                        .map(|s| matches!(s.status, NodeStatus::Succeeded | NodeStatus::Skipped))
-                        .unwrap_or(false)
-                })
-            {
-                if wf.mark_skipped(id).is_ok() {
-                    tracing::info!("skipping downstream node {} due to condition", id);
-                }
-            }
+        if let Some(node) = wf.get_node(id).cloned()
+            && node.depends_on.contains(&skipped_node.to_string())
+            && node.depends_on.iter().all(|dep| {
+                wf.node_states
+                    .get(dep)
+                    .map(|s| matches!(s.status, NodeStatus::Succeeded | NodeStatus::Skipped))
+                    .unwrap_or(false)
+            })
+            && wf.mark_skipped(id).is_ok()
+        {
+            tracing::info!("skipping downstream node {} due to condition", id);
         }
     }
 }

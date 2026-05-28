@@ -34,18 +34,10 @@ pub(crate) struct ReplaySession {
     pub(crate) event_count: usize,
 }
 
+#[derive(Default)]
 pub(crate) struct TraceEngine {
     active_spans: HashMap<String, ExecutionSpan>,
     span_counter: u64,
-}
-
-impl Default for TraceEngine {
-    fn default() -> Self {
-        Self {
-            active_spans: HashMap::new(),
-            span_counter: 0,
-        }
-    }
 }
 
 impl TraceEngine {

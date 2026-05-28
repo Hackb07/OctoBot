@@ -1,0 +1,16 @@
+.git
+.pytest_cache
+.ruff_cache
+.venv
+.octobot
+target
+node_modules
+frontend/node_modules
+frontend/dist
+frontend/src-tauri/target
+reports
+**/__pycache__
+*.pyc
+*.pyo
+*.sqlite3
+*.db

@@ -262,12 +262,16 @@ curl http://127.0.0.1:7878/api/replay/reconstruct
 
 ## Tech Stack
 
-OctoBot is built with a local-first Rust stack:
+OctoBot is built with a local-first Rust, Python, and TypeScript stack:
 
 - Language: Rust 2024 edition
 - Terminal UI: Ratatui and Crossterm
 - Async runtime: Tokio
 - HTTP API: Axum
+- Python orchestration: FastAPI and Pydantic
+- Agent graph: LangGraph-compatible graph with deterministic fallback
+- Frontend: React, TypeScript, Vite, and Tauri
+- Production frontend serving: nginx static image
 - HTTP client: Reqwest with Rustls
 - Serialization: Serde, Serde JSON, Serde YAML
 - Persistence: SQLx with PostgreSQL
@@ -276,6 +280,8 @@ OctoBot is built with a local-first Rust stack:
 - Observability and tracing: Tracing and Tracing Subscriber
 - Plugin runtime: Native Rust plugins and external script plugins
 - Workflow engine: YAML-defined DAG runtime
+- LLM providers: Ollama, OpenAI, Anthropic, and Groq-compatible APIs
+- Container deployment: Docker Compose profiles with healthchecks and TLS proxy config
 
 ## Why Local-First Matters
 
@@ -287,4 +293,4 @@ The AI runtime only accepts local Ollama endpoints, and the security layer block
 
 OctoBot is more than a terminal dashboard. It is a local-first agentic OS with process management, syscalls, services, memory, apps, security, workflow automation, observability, explainability, and replay built into the core.
 
-For teams that live in terminals and care about operational safety, OctoBot provides a practical foundation for AI-assisted incident response and infrastructure control.
+For teams that live in terminals and care about operational safety, OctoBot provides a production-oriented base for AI-assisted incident response, infrastructure control, and autonomous coding workflows.

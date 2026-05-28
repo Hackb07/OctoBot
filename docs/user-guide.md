@@ -4,7 +4,7 @@ This guide explains how to install OctoBot, run it locally, test each major feat
 
 ## What OctoBot Does
 
-OctoBot is a terminal operations console. It combines a Ratatui dashboard, an event-driven runtime, Ollama-backed AI agents, allowlisted command execution, YAML workflows, recovery approvals, reporting, replay, and optional persistence.
+OctoBot is a terminal operations console and autonomous coding platform. It combines a Ratatui dashboard, an event-driven Rust runtime, Ollama-backed AI agents, allowlisted command execution, YAML workflows, recovery approvals, Python orchestration, coding-agent tools, reporting, replay, frontend monitoring, and optional persistence.
 
 The default local setup runs without external services. Optional services such as Ollama, PostgreSQL, Qdrant, Prometheus, Loki, OpenSearch, Docker, and Kubernetes unlock deeper automation and observability.
 
@@ -49,10 +49,20 @@ cargo build
 cargo test
 ```
 
-Expected test result:
+Expected Rust test result:
 
 ```text
-37 passed
+42 passed
+```
+
+Production verification also includes Python, frontend, and desktop checks:
+
+```bash
+cargo clippy --all-targets -- -D warnings
+PYTHONPATH=. .venv/bin/pytest
+PYTHONPATH=. .venv/bin/ruff check backend tests
+cd frontend && npm ci && npm run build && npm audit
+cd frontend/src-tauri && cargo check
 ```
 
 ### 4. Run
@@ -84,7 +94,7 @@ Controls:
 
 ## Optional Local AI Setup
 
-OctoBot currently uses Ollama for local agent tasks.
+OctoBot uses Ollama for local Rust-side agent tasks. The Python orchestrator also supports Ollama, OpenAI, Anthropic, and Groq-compatible provider routing.
 
 Install Ollama, then pull useful models:
 
@@ -153,6 +163,42 @@ Allowlisted `/exec` examples:
 ```
 
 Commands outside the allowlist are rejected by the sandbox.
+
+## Autonomous Coding Platform
+
+Start the Python orchestrator:
+
+```bash
+. .venv/bin/activate
+uvicorn backend.octobot_orchestrator.main:app --host 127.0.0.1 --port 8787
+```
+
+Create a coding task:
+
+```bash
+curl -s http://127.0.0.1:8787/api/tasks \
+  -H 'content-type: application/json' \
+  -d '{"goal":"summarize repository","repository":{"path":"."},"dry_run":true}'
+```
+
+Run and inspect the task:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/tasks/<task_id>/run
+curl -s http://127.0.0.1:8787/api/tasks/<task_id>/report
+curl -s http://127.0.0.1:8787/api/tasks/<task_id>/observability
+curl -s http://127.0.0.1:8787/metrics
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+The frontend includes task history, event stream, diff, approval, and memory-search panels. The production Docker image builds static assets and serves them through nginx.
 
 ## Feature Walkthroughs
 
@@ -511,6 +557,10 @@ curl http://127.0.0.1:7878/api/replay/reconstruct
 | `OCTOBOT_EVENT_LIMIT` | Max in-memory events | `120` |
 | `OCTOBOT_STREAM_CAPTURE_LINES` | Max captured command output lines | `100` |
 | `OCTOBOT_TRACE` | Enable tracing output | unset |
+| `OCTOBOT_SERVICE_TOKEN` | Python orchestrator service token | unset |
+| `OCTOBOT_RUNTIME_URL` | Runtime service URL for orchestrator | `ws://runtime:7879` |
+| `OCTOBOT_TLS_CERT` | TLS certificate path for Compose proxy | unset |
+| `OCTOBOT_TLS_KEY` | TLS private key path for Compose proxy | unset |
 
 ## Troubleshooting
 

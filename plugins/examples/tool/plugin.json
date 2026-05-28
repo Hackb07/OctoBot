@@ -1,0 +1,15 @@
+{
+  "compatibility": {
+    "octobot": ">=0.1.0"
+  },
+  "description": "example tool plugin",
+  "entrypoint": "plugin.py",
+  "kind": "tool",
+  "name": "example-tool",
+  "permissions": [
+    "tool:execute"
+  ],
+  "signed": false,
+  "signature": null,
+  "version": "0.1.0"
+}

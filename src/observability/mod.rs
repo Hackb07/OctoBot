@@ -336,7 +336,7 @@ impl ObservabilityEngine {
         let mut forecasts = Vec::new();
         for step in 1..=3 {
             let pred = slope * (n + step as f64 - 1.0) + intercept;
-            forecasts.push(pred.max(0.0).min(100.0) as u8);
+            forecasts.push(pred.clamp(0.0, 100.0) as u8);
         }
         // Alert if forecast exceeds threshold
         let threshold = 85.0;
@@ -370,9 +370,9 @@ impl ObservabilityEngine {
         };
         let burn_rate = (SLO_TARGET - availability.min(SLO_TARGET)) / 100.0 * 3600.0; // per hour
         SloBurnReport {
-            availability: availability.min(100.0).max(0.0),
+            availability: availability.clamp(0.0, 100.0),
             slo_target: SLO_TARGET,
-            error_budget_remaining: error_budget_remaining.max(0.0).min(100.0),
+            error_budget_remaining: error_budget_remaining.clamp(0.0, 100.0),
             burn_rate: burn_rate.max(0.0),
         }
     }
@@ -399,7 +399,7 @@ impl ObservabilityEngine {
         // Contradiction penalty
         let contradiction_penalty = state.research_profile.contradiction_count as f64 * 5.0;
         let raw = signals.iter().sum::<f64>() - contradiction_penalty;
-        raw.max(0.0).min(100.0) as u8
+        raw.clamp(0.0, 100.0) as u8
     }
 
     /// Emit a metrics-sampled event with anomaly detection
@@ -408,26 +408,26 @@ impl ObservabilityEngine {
         state: &OpsState,
         event_tx: &mpsc::UnboundedSender<OpsEvent>,
     ) {
-        if let Some(anomaly) = self.detect_anomalies(&state.metrics) {
-            if anomaly.zscore > ANOMALY_ZSCORE_THRESHOLD {
-                let _ = event_tx.send(OpsEvent::ExplainabilityRecorded {
-                    record: crate::models::ExplainabilityRecord {
-                        id: next_id("exp-anomaly"),
-                        action: "anomaly-detection".into(),
-                        why: format!(
-                            "Metric anomaly detected: value={:.1}, zscore={:.1}",
-                            anomaly.value, anomaly.zscore
-                        ),
-                        evidence: vec![
-                            format!("zscore={:.2}", anomaly.zscore),
-                            format!("value={:.1}", anomaly.value),
-                        ],
-                        confidence: 80,
-                        tools_used: vec!["observability-anomaly-detector".into()],
-                        timestamp: now_ts(),
-                    },
-                });
-            }
+        if let Some(anomaly) = self.detect_anomalies(&state.metrics)
+            && anomaly.zscore > ANOMALY_ZSCORE_THRESHOLD
+        {
+            let _ = event_tx.send(OpsEvent::ExplainabilityRecorded {
+                record: crate::models::ExplainabilityRecord {
+                    id: next_id("exp-anomaly"),
+                    action: "anomaly-detection".into(),
+                    why: format!(
+                        "Metric anomaly detected: value={:.1}, zscore={:.1}",
+                        anomaly.value, anomaly.zscore
+                    ),
+                    evidence: vec![
+                        format!("zscore={:.2}", anomaly.zscore),
+                        format!("value={:.1}", anomaly.value),
+                    ],
+                    confidence: 80,
+                    tools_used: vec!["observability-anomaly-detector".into()],
+                    timestamp: now_ts(),
+                },
+            });
         }
     }
 

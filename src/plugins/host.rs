@@ -193,14 +193,12 @@ pub(crate) fn discover_plugins(dir: &str) -> Vec<PluginDescriptor> {
     if let Ok(entries) = std::fs::read_dir(dir_path) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(desc) = serde_json::from_str::<PluginDescriptor>(&content) {
-                        if PluginSecurity::validate_descriptor(&desc).is_ok() {
-                            plugins.push(desc);
-                        }
-                    }
-                }
+            if path.extension().and_then(|e| e.to_str()) == Some("json")
+                && let Ok(content) = std::fs::read_to_string(&path)
+                && let Ok(desc) = serde_json::from_str::<PluginDescriptor>(&content)
+                && PluginSecurity::validate_descriptor(&desc).is_ok()
+            {
+                plugins.push(desc);
             }
         }
     }
