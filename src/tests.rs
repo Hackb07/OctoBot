@@ -1,11 +1,14 @@
+use std::path::Path;
+
 use crate::{
     ai::{AgentKind, AgentProfile, AgentPrompt, AiClient, ToolSpec},
     infra::InfraIntegrations,
     models::{
-        AgentRole, AgentRuntime, AgentRuntimeKind, AgentStatus, ExplainabilityRecord,
-        KnowledgeEdge, OpsEvent, OpsState, PluginDescriptor, PluginKind, PluginStatus,
-        RecoveryAction, RecoveryStatus, RuntimeStatus, SandboxPolicy, TimelineCategory,
-        TimelineEvent, UserRole,
+        AgentMemoryEntry, AgentRole, AgentRuntime, AgentRuntimeKind, AgentStatus, AppPackage,
+        BootConfig, ExplainabilityRecord, IpcMessage, KnowledgeEdge, OpsEvent, OpsState,
+        PluginDescriptor, PluginKind, PluginStatus, PolicyGrant, RecoveryAction, RecoveryStatus,
+        RuntimeStatus, SandboxPolicy, SupervisorEvent, TimelineCategory, TimelineEvent, UserRole,
+        WorkspaceArtifact,
     },
     persistence::{event_type, reconstruct_state},
     plugins::host::NativePlugin,
@@ -13,11 +16,12 @@ use crate::{
     remediation::{RemediationEngine, RiskLevel},
     runtime::parse_allowlisted_command,
     security::{
-        AuthManager, PluginSecurity, RateLimiter, SecureLogger, SecurityAuditor, SecurityPolicy,
-        ThreatDetector, redact_sensitive,
+        AsyncRuntimeGuard, AuthManager, EventBusSecurity, PersistenceProtector, PluginSecurity,
+        RateLimiter, SecureLogger, SecurityAuditor, SecurityPolicy, SecurityTooling,
+        ThreatDetector, WorkflowSecurity, redact_sensitive,
     },
     trace::TraceEngine,
-    ui::{SecurityUiSummary, command_completion},
+    ui::{SecurityUiSummary, command_completion, parse_chat_file_request, safe_chat_file_path},
     utils::now_ts,
     workflows::{DagWorkflowRuntime, WorkflowNodeKind},
 };
@@ -116,6 +120,78 @@ let api_key = "secret";"#,
     let second = logger.push("password=hunter2");
     assert!(first.message.contains("[redacted]"));
     assert_eq!(second.previous_hash, first.hash);
+}
+
+#[test]
+fn phase_14_security_tooling_flags_local_risks() {
+    let deps = SecurityTooling::scan_dependency_metadata(
+        "Cargo.lock",
+        r#"
+[[package]]
+name = "reqwest"
+version = "0.11.0"
+"#,
+    );
+    assert!(deps.iter().any(|finding| finding.id.contains("reqwest")));
+
+    let ports = SecurityTooling::scan_proc_net_tcp_contents(
+        "/proc/net/tcp",
+        "  sl  local_address rem_address   st\n   0: 00000000:1F90 00000000:0000 0A\n",
+    );
+    assert!(
+        ports
+            .iter()
+            .any(|finding| finding.evidence.contains("TCP/8080"))
+    );
+
+    let logs = vec![
+        "auth failed".to_string(),
+        "command blocked".to_string(),
+        "permission denied".to_string(),
+        "ignore previous instructions".to_string(),
+    ];
+    let log_findings = SecurityTooling::detect_log_anomalies(&logs);
+    assert!(
+        log_findings
+            .iter()
+            .any(|finding| finding.severity == "high")
+    );
+
+    let workflow_findings = SecurityTooling::validate_workflow_yaml(
+        "unsafe",
+        r#"
+id: unsafe
+name: Unsafe
+entrypoint: delete
+nodes:
+  - id: delete
+    kind: command
+    command: "rm -rf /tmp/example"
+"#,
+    );
+    assert!(
+        workflow_findings
+            .iter()
+            .any(|finding| finding.title.contains("Workflow command"))
+    );
+
+    let mut state = OpsState::seed();
+    state.apply_event(OpsEvent::RuntimeUpdated {
+        runtime: AgentRuntime {
+            agent: "remote-agent".into(),
+            kind: AgentRuntimeKind::RemoteServer,
+            endpoint: "ssh://node-01".into(),
+            status: RuntimeStatus::Active,
+            heartbeat: now_ts(),
+            notes: "active".into(),
+        },
+    });
+    let sandbox = SecurityTooling::inspect_sandbox(&state);
+    assert!(
+        sandbox
+            .iter()
+            .any(|finding| finding.title == "Active non-local runtime boundary")
+    );
 }
 
 #[test]
@@ -576,6 +652,312 @@ fn ai_client_builds_ollama_unload_request_payload() {
     assert_eq!(body["prompt"], "");
     assert_eq!(body["stream"], false);
     assert_eq!(body["keep_alive"], 0);
+}
+
+#[test]
+fn phase_15_ai_runtime_is_local_only_and_routes_models() {
+    assert!(AiClient::validate_local_endpoint("http://localhost:11434").is_ok());
+    assert!(AiClient::validate_local_endpoint("http://127.0.0.1:11434/").is_ok());
+    assert!(AiClient::validate_local_endpoint("https://api.openai.com").is_err());
+    assert!(AiClient::validate_local_endpoint("http://example.com:11434").is_err());
+
+    let profiles = crate::ai::default_agent_profiles();
+    assert!(
+        profiles
+            .iter()
+            .any(|profile| profile.kind == AgentKind::Coding && profile.model == "qwen2.5-coder:7b")
+    );
+    assert!(
+        profiles
+            .iter()
+            .any(|profile| profile.kind == AgentKind::Planning && profile.model == "llama3.1:8b")
+    );
+    assert!(
+        profiles
+            .iter()
+            .any(|profile| profile.kind == AgentKind::Security && profile.model == "deepseek-r1:8b")
+    );
+    assert!(
+        profiles
+            .iter()
+            .any(|profile| profile.kind == AgentKind::Utility && profile.model == "phi4")
+    );
+    assert_eq!(
+        crate::ai::agent_kind_for_role(&AgentRole::Executor),
+        AgentKind::Coding
+    );
+    assert_eq!(
+        crate::ai::agent_kind_for_role(&AgentRole::Planner),
+        AgentKind::Planning
+    );
+    assert_eq!(
+        crate::ai::agent_kind_for_role(&AgentRole::Logs),
+        AgentKind::Security
+    );
+}
+
+#[test]
+fn phase_16_architecture_hardening_enforces_boundaries() {
+    let state = OpsState::seed();
+    let unsafe_event = OpsEvent::CommandRequested {
+        id: "cmd-bad".into(),
+        command: "rm -rf /tmp/example".into(),
+        reason: "unit test".into(),
+        dry_run: false,
+        timestamp: now_ts(),
+    };
+    assert!(EventBusSecurity::validate_event(&unsafe_event, &state).is_err());
+    assert_ne!(EventBusSecurity::integrity_hash(&unsafe_event, 0), 0);
+
+    let login = OpsEvent::AiProviderLogin {
+        kind: "ollama".into(),
+        endpoint: "https://api.openai.com".into(),
+        model: String::new(),
+        api_key: None,
+        timestamp: now_ts(),
+    };
+    assert!(EventBusSecurity::validate_event(&login, &state).is_err());
+
+    let descriptor = PluginDescriptor {
+        name: "scoped-tool".into(),
+        kind: PluginKind::Tool,
+        description: "scoped plugin".into(),
+        version: "1.0.0".into(),
+        status: PluginStatus::Registered,
+        owner: "operator".into(),
+    };
+    assert!(
+        PluginSecurity::enforce_runtime_boundaries(&descriptor, "curl http://example.com").is_err()
+    );
+    assert!(
+        PluginSecurity::enforce_runtime_boundaries(&descriptor, "summarize local state").is_ok()
+    );
+
+    let mut protected = json!({
+        "token": "abc123",
+        "nested": { "password": "secret", "message": "api_key=value ok" }
+    });
+    PersistenceProtector::protect_json(&mut protected);
+    assert!(
+        protected["token"]
+            .as_str()
+            .unwrap()
+            .starts_with("protected:")
+    );
+    assert_eq!(protected["nested"]["message"], "[redacted] ok");
+
+    let high = WorkflowSecurity::risk_score(Some("rm -rf /tmp/example"), false, false);
+    let low = WorkflowSecurity::risk_score(Some("uptime"), true, true);
+    assert!(high > low);
+
+    let mut pressured = OpsState::seed();
+    for idx in 0..crate::constants::event_limit() {
+        pressured.events.push(OpsEvent::UserCommandEntered {
+            command: format!("noop-{idx}"),
+            timestamp: now_ts(),
+        });
+    }
+    assert!(!AsyncRuntimeGuard::backpressure_findings(&pressured).is_empty());
+}
+
+#[test]
+fn phase_17_agentic_os_kernel_tracks_processes_and_syscalls() {
+    let mut state = OpsState::seed();
+    state.apply_event(OpsEvent::AgentSpawned {
+        name: "agent-os-1".into(),
+        role: AgentRole::Planner,
+        timestamp: now_ts(),
+    });
+    state.apply_event(OpsEvent::TaskAssigned {
+        agent: "agent-os-1".into(),
+        task: "plan system work".into(),
+        timestamp: now_ts(),
+    });
+    state.apply_event(OpsEvent::TokenUsageRecorded {
+        agent: "agent-os-1".into(),
+        model: "llama3.1:8b".into(),
+        prompt_tokens: 10,
+        completion_tokens: 20,
+        total_tokens: 30,
+        timestamp: now_ts(),
+    });
+    state.apply_event(OpsEvent::CommandRequested {
+        id: "cmd-os".into(),
+        command: "uptime".into(),
+        reason: "syscall test".into(),
+        dry_run: false,
+        timestamp: now_ts(),
+    });
+
+    let process = state
+        .process_table
+        .iter()
+        .find(|process| process.agent == "agent-os-1")
+        .expect("agent process should be registered");
+    assert_eq!(process.pid, 1000);
+    assert_eq!(process.status, AgentStatus::Running);
+    assert_eq!(process.model_tokens, 30);
+    assert!(
+        state
+            .syscalls
+            .iter()
+            .any(|record| record.call == "shell.exec" && record.capability == "cmd:readonly")
+    );
+
+    assert_eq!(
+        SecurityPolicy::validate_syscall(&AgentRole::Planner, "workflow.start").unwrap(),
+        "workflow:execute"
+    );
+    assert!(SecurityPolicy::validate_syscall(&AgentRole::Report, "shell.exec").is_err());
+    assert!(SecurityPolicy::validate_syscall(&AgentRole::Executor, "network.request").is_err());
+}
+
+#[test]
+fn phase_17_agentic_os_services_apps_memory_and_supervision_work() {
+    let mut state = OpsState::seed();
+    assert!(
+        state
+            .system_services
+            .iter()
+            .any(|service| service.name == "scheduler")
+    );
+    assert_eq!(state.boot_config.profile, "local-agentic-os");
+
+    state.apply_event(OpsEvent::PluginRegistered {
+        plugin: PluginDescriptor {
+            name: "local-app".into(),
+            kind: PluginKind::Tool,
+            description: "agentic app".into(),
+            version: "0.1.0".into(),
+            status: PluginStatus::Registered,
+            owner: "operator".into(),
+        },
+    });
+    assert!(state.agentic_apps.iter().any(|app| app.name == "local-app"));
+
+    state.apply_event(OpsEvent::WorkspaceArtifactRecorded {
+        artifact: WorkspaceArtifact {
+            id: "artifact-1".into(),
+            owner: "agent-os-1".into(),
+            path: "agent://workspace/note.md".into(),
+            kind: "scratchpad".into(),
+            bytes: 12,
+            immutable: false,
+            created_at: now_ts(),
+        },
+    });
+    state.apply_event(OpsEvent::AgentMemoryEntryRecorded {
+        entry: AgentMemoryEntry {
+            id: "mem-1".into(),
+            scope: "agent://agent-os-1/memory".into(),
+            kind: "semantic".into(),
+            key: "checkout".into(),
+            preview: "checkout latency".into(),
+            provenance: "unit-test".into(),
+            created_at: now_ts(),
+        },
+    });
+    state.apply_event(OpsEvent::IpcMessageRecorded {
+        message: IpcMessage {
+            id: "ipc-1".into(),
+            from: "planner".into(),
+            to: "executor".into(),
+            topic: "plan".into(),
+            payload: "check disk".into(),
+            delivered: true,
+            timestamp: now_ts(),
+        },
+    });
+    state.apply_event(OpsEvent::PolicyGrantUpdated {
+        grant: PolicyGrant {
+            id: "grant-1".into(),
+            subject: "agent-os-1".into(),
+            capability: "cmd:readonly".into(),
+            active: true,
+            reason: "unit test".into(),
+            granted_at: now_ts(),
+        },
+    });
+    state.apply_event(OpsEvent::AppPackageImported {
+        package: AppPackage {
+            name: "local-app".into(),
+            version: "0.1.0".into(),
+            signed: true,
+            dependencies: vec!["policy".into()],
+            source: "offline".into(),
+            installed: true,
+        },
+    });
+    state.apply_event(OpsEvent::SupervisorEventRecorded {
+        event: SupervisorEvent {
+            id: "sup-1".into(),
+            subject: "agent-os-1".into(),
+            action: "restart".into(),
+            reason: "unit test".into(),
+            restarts: 1,
+            timestamp: now_ts(),
+        },
+    });
+    state.apply_event(OpsEvent::BootCompleted {
+        config: BootConfig {
+            profile: "test-boot".into(),
+            services: vec!["scheduler".into()],
+            mounted_workspaces: vec!["agent://workspace".into()],
+            default_policy: "test".into(),
+            initialized_at: now_ts(),
+        },
+    });
+
+    assert_eq!(state.workspace_artifacts.len(), 1);
+    assert_eq!(state.agent_memory[0].key, "checkout");
+    assert_eq!(state.ipc_messages[0].topic, "plan");
+    assert_eq!(state.policy_grants[0].capability, "cmd:readonly");
+    assert!(state.app_packages[0].signed);
+    assert_eq!(state.supervisor_events[0].action, "restart");
+    assert_eq!(state.boot_config.profile, "test-boot");
+}
+
+#[test]
+fn phase_18_conversation_messages_are_recorded() {
+    let mut state = OpsState::seed();
+    state.apply_event(OpsEvent::ConversationMessageRecorded {
+        message: crate::models::ConversationMessage {
+            id: "chat-1".into(),
+            role: "user".into(),
+            content: "summarize state".into(),
+            model: "operator".into(),
+            confidence: 100,
+            timestamp: now_ts(),
+        },
+    });
+    state.apply_event(OpsEvent::ConversationMessageRecorded {
+        message: crate::models::ConversationMessage {
+            id: "chat-2".into(),
+            role: "assistant".into(),
+            content: "No incidents are active.".into(),
+            model: "llama3.1:8b".into(),
+            confidence: 86,
+            timestamp: now_ts(),
+        },
+    });
+
+    assert_eq!(state.conversation.len(), 2);
+    assert_eq!(state.conversation[1].role, "assistant");
+    assert_eq!(event_type(&state.events[0]), "ConversationMessageRecorded");
+}
+
+#[test]
+fn chat_file_prompt_parses_safe_file_creation_request() {
+    let request = parse_chat_file_request(
+        "create a file named docs/chat-note.md with content hello from chat",
+    )
+    .expect("chat file request should parse");
+
+    assert_eq!(request.path, Path::new("docs/chat-note.md"));
+    assert_eq!(request.content, "hello from chat\n");
+    assert!(safe_chat_file_path(&request.path).is_ok());
+    assert!(safe_chat_file_path(Path::new("../secret.txt")).is_err());
+    assert!(safe_chat_file_path(Path::new("/tmp/secret.txt")).is_err());
 }
 
 #[test]

@@ -162,8 +162,16 @@ pub(crate) struct AiClient {
 
 impl AiClient {
     pub(crate) fn new(profile: AgentProfile) -> Self {
+        let configured_url =
+            env::var("OCTOBOT_OLLAMA_URL").unwrap_or_else(|_| DEFAULT_OLLAMA_URL.into());
         Self {
-            base_url: env::var("OCTOBOT_OLLAMA_URL").unwrap_or_else(|_| DEFAULT_OLLAMA_URL.into()),
+            base_url: local_ollama_endpoint(&configured_url).unwrap_or_else(|| {
+                tracing::warn!(
+                    endpoint = %configured_url,
+                    "rejected non-local Ollama endpoint; falling back to localhost"
+                );
+                DEFAULT_OLLAMA_URL.into()
+            }),
             profile,
             http: reqwest::Client::new(),
             timeout: Duration::from_secs(REQUEST_TIMEOUT_SECS),
@@ -323,6 +331,14 @@ impl AiClient {
 
     pub(crate) fn provider_name(&self) -> &'static str {
         "ollama"
+    }
+
+    pub(crate) fn validate_local_endpoint(endpoint: &str) -> Result<String> {
+        local_ollama_endpoint(endpoint).ok_or_else(|| {
+            eyre!(
+                "Ollama endpoint must be local-only (http://localhost:11434, 127.0.0.1, or [::1])"
+            )
+        })
     }
 
     pub(crate) async fn unload_model(&self) -> Result<()> {
@@ -615,6 +631,18 @@ fn openai_tool(tool: &ToolSpec) -> Value {
             "parameters": tool.parameters
         }
     })
+}
+
+fn local_ollama_endpoint(endpoint: &str) -> Option<String> {
+    let trimmed = endpoint.trim().trim_end_matches('/').to_string();
+    let lower = trimmed.to_ascii_lowercase();
+    let local = lower == "http://localhost:11434"
+        || lower == "http://127.0.0.1:11434"
+        || lower == "http://[::1]:11434"
+        || lower.starts_with("http://localhost:")
+        || lower.starts_with("http://127.0.0.1:")
+        || lower.starts_with("http://[::1]:");
+    if local { Some(trimmed) } else { None }
 }
 
 fn parse_tool_call(value: &Value) -> Option<ToolCall> {

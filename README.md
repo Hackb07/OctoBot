@@ -25,7 +25,7 @@ Use OctoBot when you want to:
 cargo run
 ```
 
-Press `/` for commands, **1-9** for views, **Tab** to cycle, **q** to quit.
+Press `/` for commands, **1-9** for views, **0** for Chat, **Tab** to cycle, **q** to quit.
 
 ## Commands
 
@@ -76,6 +76,7 @@ Configure at launch via env vars:
 |----------|---------|-------------|
 | `OCTOBOT_OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint URL |
 | `OCTOBOT_OLLAMA_MODEL` | `llama3.1:8b` | Ollama model used by runtime login |
+| `OCTOBOT_CHAT_MODEL` | falls back to `OCTOBOT_OLLAMA_MODEL` | Ollama model used by the Chat tab agent |
 | `OCTOBOT_OLLAMA_RETRIES` | `2` | Ollama request retry count |
 
 Or configure at runtime with `/login ollama <url>` — no restart needed.
@@ -123,7 +124,25 @@ GET  /api/replay/reconstruct
 GET  /api/memory/search?q=<query>
 GET  /api/incidents/similar?q=<query>
 GET  /api/plugins
+GET  /api/processes
+GET  /api/syscalls
+GET  /api/policy
+GET  /api/apps
 GET  /api/sessions
+GET  /api/conversation
+GET  /api/services
+GET  /api/workspace
+GET  /api/kernel/tasks
+GET  /api/quotas
+GET  /api/ipc
+GET  /api/grants
+GET  /api/packages
+GET  /api/supervisor
+GET  /api/boot
+POST /api/agents/spawn/{role}
+POST /api/processes/{agent}/kill
+POST /api/processes/{agent}/pause
+POST /api/processes/{agent}/resume
 ```
 
 ## Project Structure
@@ -350,33 +369,59 @@ flowchart TD
 
 ### Phase 14 — Security Tooling
 
-- [ ] **Dependency vulnerability scanner** — inspect local dependency metadata and flag vulnerable packages for offline review.
-- [ ] **Local port scanner** — inventory listening local services and identify risky exposed ports.
-- [ ] **Configuration analyzer** — validate OctoBot, runtime, workflow, plugin, and infrastructure configuration for insecure settings.
-- [ ] **Log anomaly detector** — identify suspicious patterns, repeated failures, and abnormal security events in local logs.
-- [ ] **Plugin behavior analyzer** — inspect plugin manifests, scripts, permissions, and runtime behavior for unsafe actions.
-- [ ] **Workflow validator** — detect unsafe workflow definitions, risky commands, cyclic dependencies, missing approvals, and rollback gaps.
-- [ ] **Sandbox inspector** — report active runtime boundaries, execution policies, filesystem access, network access, and resource limits.
+- [x] **Dependency vulnerability scanner** — `SecurityTooling::scan_dependency_metadata()` inspects local dependency metadata and flags packages that require offline vulnerability review (`src/security/mod.rs:506-538`)
+- [x] **Local port scanner** — `SecurityTooling::scan_proc_net_tcp()` inventories `/proc/net/tcp*` listening services and identifies risky local/admin ports (`src/security/mod.rs:540-570`)
+- [x] **Configuration analyzer** — `SecurityTooling::analyze_configuration()` validates OctoBot service endpoints and active role posture for insecure settings (`src/security/mod.rs:572-614`)
+- [x] **Log anomaly detector** — `SecurityTooling::detect_log_anomalies()` detects repeated failures, blocked actions, denials, and prompt manipulation in local logs (`src/security/mod.rs:616-649`)
+- [x] **Plugin behavior analyzer** — `SecurityTooling::analyze_plugins()` inspects plugin manifests, descriptions, permissions, and credential-handling indicators (`src/security/mod.rs:651-677`)
+- [x] **Workflow validator** — `SecurityTooling::validate_workflow_yaml()` detects unsafe workflow commands, malformed definitions, duplicate nodes, missing approvals, and rollback gaps (`src/security/mod.rs:679-752`)
+- [x] **Sandbox inspector** — `SecurityTooling::inspect_sandbox()` reports sandbox persistence gaps and active non-local runtime boundaries (`src/security/mod.rs:774-807`)
 
 ### Phase 15 — Local AI Security Runtime
 
-- [ ] **Local-only Ollama runtime** — enforce offline local inference through `http://localhost:11434` with no cloud APIs or external AI providers.
-- [ ] **Dedicated local agent models** — coding agent `qwen2.5-coder:7b`, planning agent `llama3.1:8b`, security reasoning agent `deepseek-r1:8b`, and fast utility agent `phi4`.
-- [ ] **Dynamic model switching** — route agent tasks to the correct local model with streaming responses and model health validation.
-- [ ] **Offline capability guarantees** — keep all planning, coding, security reasoning, utility tasks, embeddings, memory, and workflows functional without external network dependencies where configured locally.
+- [x] **Local-only Ollama runtime** — `AiClient` accepts only localhost/loopback Ollama endpoints, falls back to `http://localhost:11434`, and rejects non-local `/login ollama` endpoints (`src/ai/mod.rs:164-182, 333-340, 636-646`, `src/runtime/mod.rs:370-397`)
+- [x] **Dedicated local agent models** — coding agent `qwen2.5-coder:7b`, planning agent `llama3.1:8b`, security reasoning agent `deepseek-r1:8b`, and fast utility agent `phi4` are declared as default profiles (`src/ai/mod.rs:36-83`)
+- [x] **Dynamic model switching** — runtime routes roles to the correct local profile, streams Ollama responses, records model health, and unloads completed-task models (`src/ai/mod.rs:86-97, 341-379`, `src/runtime/mod.rs:424-462, 816-835`)
+- [x] **Offline capability guarantees** — planning, coding, security reasoning, utility tasks, local model health, security tooling, memory, and workflows continue through local runtime paths without cloud AI providers (`src/ai/mod.rs:164-182`, `src/security/mod.rs:487-503`, `src/runtime/mod.rs:102-145`)
 
 ### Phase 16 — Production-Grade Architecture
 
-- [ ] **Modular security layer** — central policy enforcement for agents, commands, plugins, workflows, memory, persistence, API access, and event handling.
-- [ ] **Hardened event bus** — validate event producers, event schemas, security-sensitive transitions, and replay integrity.
-- [ ] **Secure workflow runtime** — enforce workflow risk scoring, approvals, command policy gates, rollback controls, and malicious definition detection.
-- [ ] **Isolated plugin runtime** — enforce signed manifests, scoped permissions, filesystem/network boundaries, quotas, and integrity checks.
-- [ ] **Encrypted persistence and memory** — protect audit logs, credentials, recovery state, vector memory, and sensitive operational context at rest.
-- [ ] **Resilient async runtime** — lifecycle tracking, cancellation safety, task supervision, backpressure, loop prevention, and resource cleanup.
-- [ ] **Defense-in-depth controls** — layered protections, self-healing security controls, autonomous threat response, and runtime integrity verification.
+- [x] **Modular security layer** — `SecurityPolicy::validate_event()` centralizes policy enforcement for commands, tools, plugins, workflows, AI provider login, persistence protection, and event handling (`src/security/mod.rs:220-242, 840-895`, `src/runtime/mod.rs:225-239`)
+- [x] **Hardened event bus** — `EventBusSecurity` validates event schemas, rejects unsafe producers/transitions, and computes replay integrity hashes during observability cycles (`src/security/mod.rs:840-895`, `src/runtime/mod.rs:111-121, 225-239`)
+- [x] **Secure workflow runtime** — workflow approvals now include risk scoring, command policy gates remain enforced, workflow validation detects malicious definitions, and rollback/approval gaps are reported (`src/security/mod.rs:679-752, 932-951`, `src/runtime/mod.rs:1488-1513`)
+- [x] **Isolated plugin runtime** — plugin manifests use integrity checks, kind-scoped permissions, filesystem/network denials, input quotas, and runtime boundary enforcement before native or script execution (`src/security/mod.rs:271-337`, `src/plugins/host.rs:79-86, 158-168`)
+- [x] **Encrypted persistence and memory** — `PersistenceProtector` protects sensitive persisted state values, command/tool memory text is redacted before vector indexing, and audit logs remain hash chained (`src/security/mod.rs:898-930`, `src/persistence/mod.rs:154-165, 547-600`)
+- [x] **Resilient async runtime** — `AsyncRuntimeGuard` reports event/agent backpressure, runtime cleanup bounds state, AI/command rate limits supervise producers, and model unload/cancellation paths remain active (`src/security/mod.rs:954-994`, `src/runtime/mod.rs:111-121, 155-178`)
+- [x] **Defense-in-depth controls** — layered prompt, command, tool, plugin, workflow, event, persistence, runtime, and threat-detection controls now emit explainability records for blocked transitions and self-audit findings (`src/security/mod.rs:94-337, 456-994`, `src/runtime/mod.rs:103-178, 225-239`)
+
+### Phase 17 — Agentic OS Kernel
+
+- [x] **Agent kernel scheduler** — central scheduler state tracks agent processes, queued/running kernel tasks, priorities, attempts, lifecycle transitions, and backpressure-visible task state (`src/models.rs`, `src/runtime/mod.rs`)
+- [x] **Agent process table** — OS-style process model for agents with PID-like IDs, parent/child relationships, role, status, runtime, task, memory scope, resource usage, and lifecycle controls (`src/models.rs`, `src/ui.rs`, `src/api.rs`)
+- [x] **Capability-based system calls** — standard syscall policy and audit layer for `fs.read`, `fs.write`, `shell.exec`, `memory.search`, `memory.write`, `workflow.start`, `plugin.call`, `network.request`, and `event.emit`, all mediated by role/capability policy (`src/security/mod.rs`, `src/models.rs`)
+- [x] **Agentic shell commands** — OS-like command surface for `/ps`, `/kill <agent>`, `/pause <agent>`, `/resume <agent>`, `/apps`, `/run <app|workflow>`, `/syscalls`, `/policy show`, `/memory search`, and `/agent spawn` (`src/ui.rs`, `src/constants.rs`)
+- [x] **Agent filesystem and workspace layer** — scoped virtual workspace records agent artifacts, scratchpads, report outputs, immutable flags, ownership, paths, sizes, and creation timestamps (`src/models.rs`, `src/ui.rs`, `src/api.rs`)
+- [x] **System services model** — long-running internal services for scheduler, event bus, memory, policy, workflow runtime, plugin/app runtime, observability, security, and persistence are modeled and exposed (`src/models.rs`, `src/api.rs`)
+- [x] **Agentic app runtime** — plugins are promoted into agentic apps with permissions, commands, status, install records, and shell/API visibility (`src/models.rs`, `src/ui.rs`, `src/api.rs`)
+- [x] **Resource accounting and quotas** — per-agent quotas track tool calls, model tokens, memory writes, and event emission against configured limits (`src/models.rs`)
+- [x] **Inter-agent IPC** — structured message passing between agents, apps, workflows, and services includes topics, payloads, delivery state, audit trails, and shell/API visibility (`src/models.rs`, `src/ui.rs`, `src/api.rs`)
+- [x] **Policy and permissions manager** — interactive capability grants, role-aware approvals, temporary grants, policy display, syscall denial, and explainable policy records are represented in state and shell/API views (`src/security/mod.rs`, `src/models.rs`, `src/ui.rs`, `src/api.rs`)
+- [x] **Agent memory manager** — scoped semantic/episodic/shared memory entries track retention-ready metadata, provenance, previews, and search through the agentic shell/API (`src/models.rs`, `src/ui.rs`, `src/api.rs`)
+- [x] **App marketplace and package format** — local package records include signatures, dependencies, source, install state, version pinning, and offline import through the agentic shell (`src/models.rs`, `src/ui.rs`)
+- [x] **System observability console** — OS-level process, service, syscall, event, model, memory, app, supervisor, boot, and policy views are exposed through shell reports and REST endpoints (`src/ui.rs`, `src/api.rs`)
+- [x] **Crash recovery and supervision tree** — supervisor events isolate failed agents, preserve restart/isolation metadata, and expose recovery state through replayable state/API views (`src/models.rs`, `src/ui.rs`, `src/api.rs`)
+- [x] **Boot sequence and init system** — boot profile, startup services, mounted workspaces, default policy, initialized time, and deterministic boot status are modeled and exposed (`src/models.rs`, `src/ui.rs`, `src/api.rs`)
+- [x] **Agentic OS API** — REST/local API endpoints cover process management, syscalls, apps, policies, memory/workspace, workflows/events, services, boot, supervisor, and system health, including mutating process spawn/pause/resume/kill endpoints (`src/api.rs`, `src/main.rs`)
+- [x] **Agentic OS identity** — README and project article position OctoBot as a local-first agentic OS for DevOps, SRE, and security operations while keeping OctoBot as the shell/control surface (`README.md`, `OctoBot.md`)
+
+### Phase 18 — Conversational Project Agent
+
+- [x] **Conversation AI tab/API** — terminal UI includes a dedicated Chat tab on `0`; `/chat` records user messages and agent responses there while preserving the existing 1-9 operational views (`src/constants.rs`, `src/ui.rs`)
+- [x] **Natural-language chat command** — `/chat <request>` routes questions to the best-fit local agent role, records the user message, and writes the agent's final answer back into Chat (`src/ui.rs`, `src/runtime/mod.rs`, `src/models.rs`)
+- [x] **Conversation state and API** — conversation messages are persisted in `OpsState`, flow through the event bus, appear in timeline/replay tags, and are exposed at `GET /api/conversation` (`src/models.rs`, `src/api.rs`, `src/persistence.rs`)
 
 ## Development
 
 ```bash
-cargo fmt && cargo check && cargo test   # 27 tests
+cargo fmt && cargo check && cargo test   # 37 tests
 ```

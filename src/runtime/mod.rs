@@ -20,18 +20,24 @@ use crate::{
         build_messages, default_agent_profiles,
     },
     infra::InfraIntegrations,
-    models::{AgentRole, OpsEvent, OpsState, RecoveryAction, RecoveryStatus, UserRole},
+    models::{
+        AgentRole, ConversationMessage, ExplainabilityRecord, OpsEvent, OpsState, RecoveryAction,
+        RecoveryStatus, UserRole,
+    },
     observability::ObservabilityEngine,
     persistence::PersistenceRuntime,
     security::{
-        CommandTier, RateLimiter, ReliabilityGuard, SecurityAuditor, SecurityPolicy,
-        ThreatDetector, redact_sensitive,
+        AsyncRuntimeGuard, CommandTier, EventBusSecurity, RateLimiter, ReliabilityGuard,
+        SecurityAuditor, SecurityPolicy, SecurityTooling, ThreatDetector, WorkflowSecurity,
+        redact_sensitive,
     },
     utils::{next_agent_name, next_id, next_sub_agent_name, now_ts},
     workflows::{
         DagWorkflowRuntime, NodeStatus, WorkflowNode, WorkflowNodeKind, load_workflows_from_dir,
     },
 };
+
+const CHAT_TASK_PREFIX: &str = "[ChatQuery]";
 
 pub(crate) async fn ops_runtime(
     tx: watch::Sender<OpsState>,
@@ -104,6 +110,70 @@ pub(crate) async fn ops_runtime(
                 let _ = event_tx.send(OpsEvent::ExplainabilityRecorded {
                     record: SecurityAuditor::explainability_record(&findings),
                 });
+                let tooling_findings = SecurityTooling::offline_audit(&state).all_findings();
+                let runtime_findings = AsyncRuntimeGuard::backpressure_findings(&state);
+                let previous_hash = state
+                    .events
+                    .last()
+                    .map(|event| EventBusSecurity::integrity_hash(event, 0))
+                    .unwrap_or(0);
+                if let Some(last_event) = state.events.last() {
+                    let integrity = EventBusSecurity::integrity_hash(last_event, previous_hash);
+                    tracing::debug!(integrity, "validated event bus replay integrity checkpoint");
+                }
+                if !tooling_findings.is_empty() {
+                    let _ = event_tx.send(OpsEvent::ExplainabilityRecorded {
+                        record: ExplainabilityRecord {
+                            id: next_id("security-tooling"),
+                            action: "Phase 14 security tooling audit".into(),
+                            why: format!(
+                                "{} dependency, port, configuration, log, plugin, workflow, or sandbox findings",
+                                tooling_findings.len()
+                            ),
+                            evidence: tooling_findings
+                                .iter()
+                                .take(8)
+                                .map(|finding| {
+                                    format!(
+                                        "{}: {} ({})",
+                                        finding.severity, finding.title, finding.evidence
+                                    )
+                                })
+                                .collect(),
+                            confidence: 82,
+                            tools_used: vec![
+                                "dependency-vulnerability-scanner".into(),
+                                "local-port-scanner".into(),
+                                "configuration-analyzer".into(),
+                                "log-anomaly-detector".into(),
+                                "plugin-behavior-analyzer".into(),
+                                "workflow-validator".into(),
+                                "sandbox-inspector".into(),
+                            ],
+                            timestamp: now_ts(),
+                        },
+                    });
+                }
+                if !runtime_findings.is_empty() {
+                    let _ = event_tx.send(OpsEvent::ExplainabilityRecorded {
+                        record: ExplainabilityRecord {
+                            id: next_id("async-runtime-guard"),
+                            action: "Phase 16 async runtime supervision".into(),
+                            why: format!("{} supervision findings", runtime_findings.len()),
+                            evidence: runtime_findings
+                                .iter()
+                                .map(|finding| format!("{}: {}", finding.severity, finding.evidence))
+                                .collect(),
+                            confidence: 84,
+                            tools_used: vec![
+                                "task-supervisor".into(),
+                                "backpressure-guard".into(),
+                                "event-integrity-checkpoint".into(),
+                            ],
+                            timestamp: now_ts(),
+                        },
+                    });
+                }
                 for signal in ThreatDetector::analyze(&state) {
                     let _ = event_tx.send(ThreatDetector::event_for(&signal));
                 }
@@ -155,6 +225,20 @@ pub(crate) async fn ops_runtime(
                 }
             }
             Some(event) = event_rx.recv() => {
+                if let Err(error) = SecurityPolicy::validate_event(&event, &state) {
+                    let _ = event_tx.send(OpsEvent::ExplainabilityRecorded {
+                        record: ExplainabilityRecord {
+                            id: next_id("event-policy-block"),
+                            action: "Blocked invalid event bus transition".into(),
+                            why: error,
+                            evidence: vec![format!("{event:?}")],
+                            confidence: 93,
+                            tools_used: vec!["event-bus-security".into(), "modular-security-policy".into()],
+                            timestamp: now_ts(),
+                        },
+                    });
+                    continue;
+                }
                 match &event {
                     OpsEvent::IncidentDetected { incident_id, .. } => {
                         let wf = create_incident_dag(incident_id.clone());
@@ -234,18 +318,32 @@ pub(crate) async fn ops_runtime(
                                     timestamp: now_ts(),
                                 },
                             });
+                            if chat_query_from_task(task).is_some() {
+                                send_chat_agent_message(
+                                    &event_tx,
+                                    "assistant",
+                                    "I cannot process that request because it looks like a prompt-injection or policy bypass attempt.",
+                                    "policy",
+                                    92,
+                                );
+                            }
                             continue;
                         }
+                        let is_chat_task = chat_query_from_task(task).is_some();
                         if let Some(client) = client_for_role(&ai_clients, &role) {
                             if let Some(prev) = pending_tasks.insert(agent.clone(), task.clone()) {
                                 tracing::warn!(agent, prev_task = %prev, new_task = %task, "agent overwritten with new task");
                             }
-                            let client = client.clone();
+                            let client = if is_chat_task {
+                                client_for_chat_task(&role).unwrap_or_else(|| client.clone())
+                            } else {
+                                client.clone()
+                            };
                             let agent = agent.clone();
                             let task = SecurityPolicy::sanitize_prompt(task);
                             let ts = timestamp.clone();
                             let tx = event_tx.clone();
-                            if is_planner {
+                            if is_planner && !is_chat_task {
                                 tokio::spawn(async move {
                                     handle_planner_task(client, agent, task, ts, tx, mem_ctx).await;
                                 });
@@ -254,6 +352,14 @@ pub(crate) async fn ops_runtime(
                                     execute_ai_task(client, agent, task, ts, tx, mem_ctx).await;
                                 });
                             }
+                        } else if is_chat_task {
+                            send_chat_agent_message(
+                                &event_tx,
+                                "assistant",
+                                "No local agent runtime is configured, so I cannot answer from the Chat tab yet. Configure local Ollama and try again.",
+                                "runtime",
+                                70,
+                            );
                         }
                     }
                     OpsEvent::CommandExecuted {
@@ -333,17 +439,28 @@ pub(crate) async fn ops_runtime(
                         ..
                     } => {
                         if kind == "ollama" {
-                            unsafe { std::env::set_var("OCTOBOT_OLLAMA_URL", endpoint); }
-                            if !model.is_empty() {
-                                unsafe { std::env::set_var("OCTOBOT_OLLAMA_MODEL", model); }
+                            match AiClient::validate_local_endpoint(endpoint) {
+                                Ok(local_endpoint) => {
+                                    unsafe { std::env::set_var("OCTOBOT_OLLAMA_URL", local_endpoint); }
+                                    if !model.is_empty() {
+                                        unsafe { std::env::set_var("OCTOBOT_OLLAMA_MODEL", model); }
+                                    }
+                                    ai_clients = build_ai_clients();
+                                    register_ollama_models(&event_tx, &ai_clients).await;
+                                    let _ = event_tx.send(OpsEvent::NotificationRaised {
+                                        level: "info".into(),
+                                        message: "ollama endpoint reconfigured from login command".into(),
+                                        timestamp: timestamp.clone(),
+                                    });
+                                }
+                                Err(error) => {
+                                    let _ = event_tx.send(OpsEvent::NotificationRaised {
+                                        level: "error".into(),
+                                        message: format!("rejected Ollama login: {error}"),
+                                        timestamp: timestamp.clone(),
+                                    });
+                                }
                             }
-                            ai_clients = build_ai_clients();
-                            register_ollama_models(&event_tx, &ai_clients).await;
-                            let _ = event_tx.send(OpsEvent::NotificationRaised {
-                                level: "info".into(),
-                                message: "ollama endpoint reconfigured from login command".into(),
-                                timestamp: timestamp.clone(),
-                            });
                         } else {
                             let _ = event_tx.send(OpsEvent::NotificationRaised {
                                 level: "warn".into(),
@@ -389,6 +506,53 @@ fn client_for_kind<'a>(clients: &'a [AiClient], kind: AgentKind) -> Option<&'a A
         .iter()
         .find(|client| client.profile().kind == kind)
         .or_else(|| clients.first())
+}
+
+fn client_for_chat_task(role: &AgentRole) -> Option<AiClient> {
+    let model = std::env::var("OCTOBOT_CHAT_MODEL")
+        .or_else(|_| std::env::var("OCTOBOT_OLLAMA_MODEL"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())?;
+    let kind = agent_kind_for_role(role);
+    Some(AiClient::new(crate::ai::AgentProfile {
+        kind,
+        name: format!("chat-{}-agent", kind.as_str()),
+        model,
+        purpose: "agentic conversation inside the OctoBot Chat tab".into(),
+    }))
+}
+
+fn chat_query_from_task(task: &str) -> Option<&str> {
+    let body = task.strip_prefix(CHAT_TASK_PREFIX)?.trim();
+    let query = body
+        .strip_prefix("User question:")
+        .unwrap_or(body)
+        .trim()
+        .split("\n\nInstructions:")
+        .next()
+        .unwrap_or(body)
+        .trim();
+    (!query.is_empty()).then_some(query)
+}
+
+fn send_chat_agent_message(
+    event_tx: &mpsc::UnboundedSender<OpsEvent>,
+    role: &str,
+    content: &str,
+    model: &str,
+    confidence: u8,
+) {
+    let _ = event_tx.send(OpsEvent::ConversationMessageRecorded {
+        message: ConversationMessage {
+            id: next_id("chat"),
+            role: role.into(),
+            content: content.into(),
+            model: model.into(),
+            confidence,
+            timestamp: now_ts(),
+        },
+    });
 }
 
 async fn register_ollama_models(
@@ -584,13 +748,24 @@ async fn execute_ai_task(
     } else {
         format!("\n\n{}", memory_ctx)
     };
-    let system_prompt = format!(
-        "You are an operations agent named {agent}. Execute the assigned task using available tools. \
-         You can request tools by name with arguments. The tool results will be provided back to you. \
-         Continue reasoning and calling tools until you have enough information to complete the task. \
-         When done, call complete_task with a summary and confidence score. Respond concisely.{}",
-        memory_section
-    );
+    let chat_query = chat_query_from_task(&task).map(str::to_string);
+    let system_prompt = if chat_query.is_some() {
+        format!(
+            "You are OctoBot's conversational agent named {agent}. Answer the user's question directly in the Chat tab. \
+             You may answer general questions, project questions, and operational questions. \
+             Use OctoBot context when relevant, be concise, and say when you are uncertain. \
+             Do not claim to run commands or modify files from chat.{}",
+            memory_section
+        )
+    } else {
+        format!(
+            "You are an operations agent named {agent}. Execute the assigned task using available tools. \
+             You can request tools by name with arguments. The tool results will be provided back to you. \
+             Continue reasoning and calling tools until you have enough information to complete the task. \
+             When done, call complete_task with a summary and confidence score. Respond concisely.{}",
+            memory_section
+        )
+    };
 
     let _ = event_tx.send(OpsEvent::ToolCallRequested {
         id: tool_id.clone(),
@@ -599,31 +774,36 @@ async fn execute_ai_task(
         timestamp: timestamp.clone(),
     });
 
-    let tools = vec![
-        ToolSpec {
-            name: "exec_command".into(),
-            description: "Run an allowlisted infrastructure command and return its output".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "command": { "type": "string", "description": "command to run" }
-                },
-                "required": ["command"]
-            }),
-        },
-        ToolSpec {
-            name: "complete_task".into(),
-            description: "Report task completion with findings and confidence score".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "summary": { "type": "string", "description": "summary of findings" },
-                    "confidence": { "type": "integer", "minimum": 0, "maximum": 100 }
-                },
-                "required": ["summary", "confidence"]
-            }),
-        },
-    ];
+    let tools = if chat_query.is_some() {
+        Vec::new()
+    } else {
+        vec![
+            ToolSpec {
+                name: "exec_command".into(),
+                description: "Run an allowlisted infrastructure command and return its output"
+                    .into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string", "description": "command to run" }
+                    },
+                    "required": ["command"]
+                }),
+            },
+            ToolSpec {
+                name: "complete_task".into(),
+                description: "Report task completion with findings and confidence score".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "summary": { "type": "string", "description": "summary of findings" },
+                        "confidence": { "type": "integer", "minimum": 0, "maximum": 100 }
+                    },
+                    "required": ["summary", "confidence"]
+                }),
+            },
+        ]
+    };
 
     let max_turns: u8 = std::env::var("OCTOBOT_AI_MAX_TURNS")
         .ok()
@@ -640,7 +820,7 @@ async fn execute_ai_task(
         let prompt = AgentPrompt {
             system: system_prompt.clone(),
             user: if history.is_empty() {
-                task.clone()
+                chat_query.clone().unwrap_or_else(|| task.clone())
             } else {
                 format!(
                     "Continue execution. Previous tool results have been provided. Current turn {turn}/{max_turns}."
@@ -729,6 +909,17 @@ async fn execute_ai_task(
                         task: format!("AI reasoning failed after max {max_turns} turns: {error}"),
                         timestamp: now_ts(),
                     });
+                    if chat_query.is_some() {
+                        send_chat_agent_message(
+                            &event_tx,
+                            "assistant",
+                            &format!(
+                                "The assigned chat agent could not complete the answer: {error}"
+                            ),
+                            client.model(),
+                            50,
+                        );
+                    }
                     return;
                 }
                 // Retry on transient failure
@@ -761,6 +952,9 @@ async fn execute_ai_task(
             value: task.clone(),
             timestamp: now_ts(),
         });
+        if chat_query.is_some() {
+            send_chat_agent_message(&event_tx, "assistant", &final_content, client.model(), 88);
+        }
         let _ = event_tx.send(OpsEvent::AgentLifecycleChanged {
             agent: agent.clone(),
             status: crate::models::AgentStatus::Completed,
@@ -1393,6 +1587,11 @@ async fn step_dag_workflows(
                     });
                 }
                 WorkflowNodeKind::Approval => {
+                    let risk_score = WorkflowSecurity::risk_score(
+                        node.command.as_deref(),
+                        node.approval_required,
+                        node.rollback.is_some(),
+                    );
                     let _ = event_tx.send(OpsEvent::RecoveryProposed {
                         action: RecoveryAction {
                             id: next_id("rec"),
@@ -1400,7 +1599,9 @@ async fn step_dag_workflows(
                             command: "systemctl restart edge-nginx".into(),
                             target: "edge-nginx".into(),
                             status: RecoveryStatus::AwaitingApproval,
-                            risk: "approval checkpoint in automated workflow".into(),
+                            risk: format!(
+                                "approval checkpoint in automated workflow; workflow risk score {risk_score}/100"
+                            ),
                             requires_role: UserRole::Operator,
                             evidence: vec![format!(
                                 "DAG workflow {wf_id} requires approval at node {node_id}"

@@ -14,6 +14,162 @@ pub(crate) struct Agent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct AgentProcess {
+    pub(crate) pid: u32,
+    pub(crate) agent: String,
+    pub(crate) parent: Option<String>,
+    pub(crate) role: AgentRole,
+    pub(crate) status: AgentStatus,
+    pub(crate) runtime: String,
+    pub(crate) task: String,
+    pub(crate) memory_scope: String,
+    pub(crate) tool_calls: u64,
+    pub(crate) model_tokens: u64,
+    pub(crate) events_emitted: u64,
+    pub(crate) started_at: String,
+    pub(crate) updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SyscallRecord {
+    pub(crate) id: String,
+    pub(crate) agent: String,
+    pub(crate) call: String,
+    pub(crate) capability: String,
+    pub(crate) allowed: bool,
+    pub(crate) reason: String,
+    pub(crate) timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ConversationMessage {
+    pub(crate) id: String,
+    pub(crate) role: String,
+    pub(crate) content: String,
+    pub(crate) model: String,
+    pub(crate) confidence: u8,
+    pub(crate) timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct KernelTask {
+    pub(crate) id: String,
+    pub(crate) owner: String,
+    pub(crate) description: String,
+    pub(crate) priority: u8,
+    pub(crate) status: String,
+    pub(crate) attempts: u8,
+    pub(crate) queued_at: String,
+    pub(crate) updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct WorkspaceArtifact {
+    pub(crate) id: String,
+    pub(crate) owner: String,
+    pub(crate) path: String,
+    pub(crate) kind: String,
+    pub(crate) bytes: usize,
+    pub(crate) immutable: bool,
+    pub(crate) created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SystemService {
+    pub(crate) name: String,
+    pub(crate) status: String,
+    pub(crate) health: u8,
+    pub(crate) started_at: String,
+    pub(crate) last_heartbeat: String,
+    pub(crate) notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct AgenticApp {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) version: String,
+    pub(crate) status: String,
+    pub(crate) permissions: Vec<String>,
+    pub(crate) commands: Vec<String>,
+    pub(crate) installed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ResourceQuota {
+    pub(crate) subject: String,
+    pub(crate) tool_call_limit: u64,
+    pub(crate) model_token_limit: u64,
+    pub(crate) memory_write_limit: u64,
+    pub(crate) event_limit: u64,
+    pub(crate) tool_calls_used: u64,
+    pub(crate) model_tokens_used: u64,
+    pub(crate) memory_writes_used: u64,
+    pub(crate) events_used: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct IpcMessage {
+    pub(crate) id: String,
+    pub(crate) from: String,
+    pub(crate) to: String,
+    pub(crate) topic: String,
+    pub(crate) payload: String,
+    pub(crate) delivered: bool,
+    pub(crate) timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct PolicyGrant {
+    pub(crate) id: String,
+    pub(crate) subject: String,
+    pub(crate) capability: String,
+    pub(crate) active: bool,
+    pub(crate) reason: String,
+    pub(crate) granted_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct AgentMemoryEntry {
+    pub(crate) id: String,
+    pub(crate) scope: String,
+    pub(crate) kind: String,
+    pub(crate) key: String,
+    pub(crate) preview: String,
+    pub(crate) provenance: String,
+    pub(crate) created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct AppPackage {
+    pub(crate) name: String,
+    pub(crate) version: String,
+    pub(crate) signed: bool,
+    pub(crate) dependencies: Vec<String>,
+    pub(crate) source: String,
+    pub(crate) installed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SupervisorEvent {
+    pub(crate) id: String,
+    pub(crate) subject: String,
+    pub(crate) action: String,
+    pub(crate) reason: String,
+    pub(crate) restarts: u8,
+    pub(crate) timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct BootConfig {
+    pub(crate) profile: String,
+    pub(crate) services: Vec<String>,
+    pub(crate) mounted_workspaces: Vec<String>,
+    pub(crate) default_policy: String,
+    pub(crate) initialized_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct AgentLink {
     pub(crate) from: String,
     pub(crate) to: String,
@@ -473,6 +629,48 @@ pub(crate) enum OpsEvent {
     WorkflowDefinitionLoaded {
         definition: WorkflowDefinitionSummary,
     },
+    AgentProcessUpdated {
+        process: AgentProcess,
+    },
+    SyscallRecorded {
+        record: SyscallRecord,
+    },
+    ConversationMessageRecorded {
+        message: ConversationMessage,
+    },
+    KernelTaskScheduled {
+        task: KernelTask,
+    },
+    WorkspaceArtifactRecorded {
+        artifact: WorkspaceArtifact,
+    },
+    SystemServiceUpdated {
+        service: SystemService,
+    },
+    AgenticAppInstalled {
+        app: AgenticApp,
+    },
+    ResourceQuotaUpdated {
+        quota: ResourceQuota,
+    },
+    IpcMessageRecorded {
+        message: IpcMessage,
+    },
+    PolicyGrantUpdated {
+        grant: PolicyGrant,
+    },
+    AgentMemoryEntryRecorded {
+        entry: AgentMemoryEntry,
+    },
+    AppPackageImported {
+        package: AppPackage,
+    },
+    SupervisorEventRecorded {
+        event: SupervisorEvent,
+    },
+    BootCompleted {
+        config: BootConfig,
+    },
     WorkflowNodeCompleted {
         workflow_id: String,
         node_id: String,
@@ -547,6 +745,20 @@ pub(crate) struct OpsState {
     pub(crate) topology: TopologySnapshot,
     pub(crate) model_health: Vec<ModelHealthSnapshot>,
     pub(crate) token_usage: TokenUsageSnapshot,
+    pub(crate) process_table: Vec<AgentProcess>,
+    pub(crate) syscalls: Vec<SyscallRecord>,
+    pub(crate) conversation: Vec<ConversationMessage>,
+    pub(crate) kernel_tasks: Vec<KernelTask>,
+    pub(crate) workspace_artifacts: Vec<WorkspaceArtifact>,
+    pub(crate) system_services: Vec<SystemService>,
+    pub(crate) agentic_apps: Vec<AgenticApp>,
+    pub(crate) resource_quotas: Vec<ResourceQuota>,
+    pub(crate) ipc_messages: Vec<IpcMessage>,
+    pub(crate) policy_grants: Vec<PolicyGrant>,
+    pub(crate) agent_memory: Vec<AgentMemoryEntry>,
+    pub(crate) app_packages: Vec<AppPackage>,
+    pub(crate) supervisor_events: Vec<SupervisorEvent>,
+    pub(crate) boot_config: BootConfig,
     pub(crate) reasoning_stream: Vec<String>,
     pub(crate) notifications: Vec<String>,
 }
@@ -602,6 +814,36 @@ impl OpsState {
             topology: TopologySnapshot::default(),
             model_health: Vec::new(),
             token_usage: TokenUsageSnapshot::default(),
+            process_table: Vec::new(),
+            syscalls: Vec::new(),
+            conversation: Vec::new(),
+            kernel_tasks: Vec::new(),
+            workspace_artifacts: Vec::new(),
+            system_services: default_system_services(),
+            agentic_apps: Vec::new(),
+            resource_quotas: Vec::new(),
+            ipc_messages: Vec::new(),
+            policy_grants: Vec::new(),
+            agent_memory: Vec::new(),
+            app_packages: Vec::new(),
+            supervisor_events: Vec::new(),
+            boot_config: BootConfig {
+                profile: "local-agentic-os".into(),
+                services: vec![
+                    "scheduler".into(),
+                    "event-bus".into(),
+                    "memory".into(),
+                    "policy".into(),
+                    "workflow".into(),
+                    "apps".into(),
+                    "observability".into(),
+                    "security".into(),
+                    "persistence".into(),
+                ],
+                mounted_workspaces: vec!["agent://workspace".into(), "agent://reports".into()],
+                default_policy: "read-only allowlist".into(),
+                initialized_at: now_ts(),
+            },
             reasoning_stream: Vec::new(),
             notifications: Vec::new(),
         }
@@ -692,6 +934,15 @@ impl OpsState {
                         task: "registered; waiting for task assignment".into(),
                     });
                 }
+                self.ensure_process(
+                    name,
+                    None,
+                    role.clone(),
+                    AgentStatus::Waiting,
+                    "registered; waiting for task assignment",
+                    timestamp,
+                );
+                self.ensure_quota(name);
                 self.active_agents = self
                     .agents
                     .iter()
@@ -722,6 +973,25 @@ impl OpsState {
                 if let Some(existing) = self.agents.iter_mut().find(|item| item.name == *agent) {
                     existing.status = status.clone();
                     existing.task = task.clone();
+                }
+                if let Some(process) = self
+                    .process_table
+                    .iter_mut()
+                    .find(|item| item.agent == *agent)
+                {
+                    process.status = status.clone();
+                    process.task = task.clone();
+                    process.updated_at = timestamp.clone();
+                }
+                if matches!(status, AgentStatus::Failed) {
+                    self.supervisor_events.push(SupervisorEvent {
+                        id: format!("supervisor-{agent}-{timestamp}"),
+                        subject: agent.clone(),
+                        action: "isolate".into(),
+                        reason: task.clone(),
+                        restarts: 0,
+                        timestamp: timestamp.clone(),
+                    });
                 }
                 if let Some(runtime) = self.runtimes.iter_mut().find(|item| item.agent == *agent) {
                     runtime.heartbeat = timestamp.clone();
@@ -837,6 +1107,14 @@ impl OpsState {
                 self.token_usage.prompt_tokens += *prompt_tokens;
                 self.token_usage.completion_tokens += *completion_tokens;
                 self.token_usage.total_tokens += *total_tokens;
+                if let Some(process) = self
+                    .process_table
+                    .iter_mut()
+                    .find(|item| item.agent == *agent)
+                {
+                    process.model_tokens = process.model_tokens.saturating_add(*total_tokens);
+                    process.updated_at = timestamp.clone();
+                }
                 self.record_timeline(TimelineEvent {
                     id: format!("time-usage-{agent}-{timestamp}"),
                     timestamp: timestamp.clone(),
@@ -888,6 +1166,23 @@ impl OpsState {
                 timestamp,
                 ..
             } => {
+                if let Some(process) = self
+                    .process_table
+                    .iter_mut()
+                    .find(|process| tool.contains(&process.agent))
+                {
+                    process.tool_calls = process.tool_calls.saturating_add(1);
+                    process.updated_at = timestamp.clone();
+                }
+                self.record_syscall(SyscallRecord {
+                    id: format!("sys-tool-{id}"),
+                    agent: "agent-runtime".into(),
+                    call: "plugin.call".into(),
+                    capability: "plugin:call".into(),
+                    allowed: true,
+                    reason: tool.clone(),
+                    timestamp: timestamp.clone(),
+                });
                 self.record_timeline(TimelineEvent {
                     id: format!("time-tool-request-{id}"),
                     timestamp: timestamp.clone(),
@@ -926,6 +1221,33 @@ impl OpsState {
                     existing.status = AgentStatus::Running;
                     existing.task = task.clone();
                 }
+                if let Some(process) = self
+                    .process_table
+                    .iter_mut()
+                    .find(|item| item.agent == *agent)
+                {
+                    process.status = AgentStatus::Running;
+                    process.task = task.clone();
+                    process.events_emitted = process.events_emitted.saturating_add(1);
+                    process.updated_at = timestamp.clone();
+                }
+                if let Some(quota) = self
+                    .resource_quotas
+                    .iter_mut()
+                    .find(|q| q.subject == *agent)
+                {
+                    quota.events_used = quota.events_used.saturating_add(1);
+                }
+                self.kernel_tasks.push(KernelTask {
+                    id: format!("ktask-{agent}-{timestamp}"),
+                    owner: agent.clone(),
+                    description: task.clone(),
+                    priority: 50,
+                    status: "running".into(),
+                    attempts: 1,
+                    queued_at: timestamp.clone(),
+                    updated_at: timestamp.clone(),
+                });
                 if let Some(runtime) = self.runtimes.iter_mut().find(|item| item.agent == *agent) {
                     runtime.status = RuntimeStatus::Active;
                     runtime.heartbeat = timestamp.clone();
@@ -944,6 +1266,31 @@ impl OpsState {
             OpsEvent::AgentMemoryStored {
                 agent, key, value, ..
             } => {
+                self.record_syscall(SyscallRecord {
+                    id: format!("sys-memory-{agent}-{key}"),
+                    agent: agent.clone(),
+                    call: "memory.write".into(),
+                    capability: "memory:write".into(),
+                    allowed: true,
+                    reason: "agent memory write recorded".into(),
+                    timestamp: now_ts(),
+                });
+                self.agent_memory.push(AgentMemoryEntry {
+                    id: format!("mem-{agent}-{key}"),
+                    scope: format!("agent://{agent}/memory"),
+                    kind: "episodic".into(),
+                    key: key.clone(),
+                    preview: trim_preview(value.clone()),
+                    provenance: "AgentMemoryStored".into(),
+                    created_at: now_ts(),
+                });
+                if let Some(quota) = self
+                    .resource_quotas
+                    .iter_mut()
+                    .find(|q| q.subject == *agent)
+                {
+                    quota.memory_writes_used = quota.memory_writes_used.saturating_add(1);
+                }
                 self.record_timeline(TimelineEvent {
                     id: format!("memory-{agent}-{key}"),
                     timestamp: now_ts(),
@@ -997,6 +1344,15 @@ impl OpsState {
                     85,
                     &now_ts(),
                 );
+                self.ipc_messages.push(IpcMessage {
+                    id: format!("ipc-{executor}-{planner}"),
+                    from: executor.clone(),
+                    to: planner.clone(),
+                    topic: "subtask-completed".into(),
+                    payload: format!("{sub_task}: {result}"),
+                    delivered: true,
+                    timestamp: now_ts(),
+                });
             }
             OpsEvent::CommandRequested {
                 id,
@@ -1005,6 +1361,22 @@ impl OpsState {
                 timestamp,
                 reason,
             } => {
+                self.record_syscall(SyscallRecord {
+                    id: format!("sys-{id}"),
+                    agent: "operator".into(),
+                    call: "shell.exec".into(),
+                    capability: "cmd:readonly".into(),
+                    allowed: true,
+                    reason: command.clone(),
+                    timestamp: timestamp.clone(),
+                });
+                if let Some(quota) = self
+                    .resource_quotas
+                    .iter_mut()
+                    .find(|q| q.subject == "operator")
+                {
+                    quota.events_used = quota.events_used.saturating_add(1);
+                }
                 self.executions.push(ExecutionRecord {
                     id: id.clone(),
                     command: command.clone(),
@@ -1096,6 +1468,15 @@ impl OpsState {
                     "{}: {} (confidence {}%)",
                     topic, conclusion, confidence
                 ));
+                self.workspace_artifacts.push(WorkspaceArtifact {
+                    id: format!("artifact-{topic}-{timestamp}"),
+                    owner: "reports".into(),
+                    path: format!("agent://reports/{topic}.md"),
+                    kind: "report".into(),
+                    bytes: conclusion.len(),
+                    immutable: false,
+                    created_at: timestamp.clone(),
+                });
                 self.refresh_research_profile(topic, conclusion, *confidence, timestamp);
                 self.record_timeline(TimelineEvent {
                     id: format!("time-research-{topic}"),
@@ -1295,6 +1676,20 @@ impl OpsState {
                 } else {
                     self.plugins.push(plugin.clone());
                 }
+                let permissions =
+                    crate::security::PluginSecurity::permissions_for_kind(&plugin.kind)
+                        .iter()
+                        .map(|scope| (*scope).to_string())
+                        .collect::<Vec<_>>();
+                self.upsert_agentic_app(AgenticApp {
+                    id: format!("app-{}", plugin.name),
+                    name: plugin.name.clone(),
+                    version: plugin.version.clone(),
+                    status: format!("{:?}", plugin.status),
+                    permissions,
+                    commands: vec![format!("plugin enable {}", plugin.name)],
+                    installed_at: now_ts(),
+                });
             }
             OpsEvent::PluginStatusChanged {
                 name,
@@ -1303,6 +1698,9 @@ impl OpsState {
             } => {
                 if let Some(existing) = self.plugins.iter_mut().find(|item| item.name == *name) {
                     existing.status = status.clone();
+                }
+                if let Some(app) = self.agentic_apps.iter_mut().find(|item| item.name == *name) {
+                    app.status = format!("{status:?}");
                 }
             }
             OpsEvent::RuntimeUpdated { runtime } => {
@@ -1315,6 +1713,105 @@ impl OpsState {
                 } else {
                     self.runtimes.push(runtime.clone());
                 }
+                if let Some(process) = self
+                    .process_table
+                    .iter_mut()
+                    .find(|item| item.agent == runtime.agent)
+                {
+                    process.runtime = runtime.endpoint.clone();
+                    process.updated_at = runtime.heartbeat.clone();
+                }
+            }
+            OpsEvent::AgentProcessUpdated { process } => {
+                if let Some(existing) = self
+                    .process_table
+                    .iter_mut()
+                    .find(|item| item.agent == process.agent)
+                {
+                    *existing = process.clone();
+                } else {
+                    self.process_table.push(process.clone());
+                }
+            }
+            OpsEvent::SyscallRecorded { record } => {
+                self.record_syscall(record.clone());
+            }
+            OpsEvent::ConversationMessageRecorded { message } => {
+                self.conversation.push(message.clone());
+                if self.conversation.len() > 120 {
+                    let drop_count = self.conversation.len() - 120;
+                    self.conversation.drain(0..drop_count);
+                }
+            }
+            OpsEvent::KernelTaskScheduled { task } => {
+                if let Some(existing) = self.kernel_tasks.iter_mut().find(|item| item.id == task.id)
+                {
+                    *existing = task.clone();
+                } else {
+                    self.kernel_tasks.push(task.clone());
+                }
+            }
+            OpsEvent::WorkspaceArtifactRecorded { artifact } => {
+                self.workspace_artifacts.push(artifact.clone());
+            }
+            OpsEvent::SystemServiceUpdated { service } => {
+                if let Some(existing) = self
+                    .system_services
+                    .iter_mut()
+                    .find(|item| item.name == service.name)
+                {
+                    *existing = service.clone();
+                } else {
+                    self.system_services.push(service.clone());
+                }
+            }
+            OpsEvent::AgenticAppInstalled { app } => {
+                self.upsert_agentic_app(app.clone());
+            }
+            OpsEvent::ResourceQuotaUpdated { quota } => {
+                if let Some(existing) = self
+                    .resource_quotas
+                    .iter_mut()
+                    .find(|item| item.subject == quota.subject)
+                {
+                    *existing = quota.clone();
+                } else {
+                    self.resource_quotas.push(quota.clone());
+                }
+            }
+            OpsEvent::IpcMessageRecorded { message } => {
+                self.ipc_messages.push(message.clone());
+            }
+            OpsEvent::PolicyGrantUpdated { grant } => {
+                if let Some(existing) = self
+                    .policy_grants
+                    .iter_mut()
+                    .find(|item| item.id == grant.id)
+                {
+                    *existing = grant.clone();
+                } else {
+                    self.policy_grants.push(grant.clone());
+                }
+            }
+            OpsEvent::AgentMemoryEntryRecorded { entry } => {
+                self.agent_memory.push(entry.clone());
+            }
+            OpsEvent::AppPackageImported { package } => {
+                if let Some(existing) = self
+                    .app_packages
+                    .iter_mut()
+                    .find(|item| item.name == package.name && item.version == package.version)
+                {
+                    *existing = package.clone();
+                } else {
+                    self.app_packages.push(package.clone());
+                }
+            }
+            OpsEvent::SupervisorEventRecorded { event } => {
+                self.supervisor_events.push(event.clone());
+            }
+            OpsEvent::BootCompleted { config } => {
+                self.boot_config = config.clone();
             }
             OpsEvent::KnowledgeNodeEnsured { node } => {
                 self.ensure_knowledge_node(
@@ -1374,6 +1871,88 @@ impl OpsState {
             let drop_count = self.recovery_actions.len() - recovery_limit;
             self.recovery_actions.drain(0..drop_count);
         }
+        let syscall_limit = crate::constants::syscall_limit();
+        if self.syscalls.len() > syscall_limit {
+            let drop_count = self.syscalls.len() - syscall_limit;
+            self.syscalls.drain(0..drop_count);
+        }
+    }
+
+    fn ensure_quota(&mut self, subject: &str) {
+        if self
+            .resource_quotas
+            .iter()
+            .any(|quota| quota.subject == subject)
+        {
+            return;
+        }
+        self.resource_quotas.push(ResourceQuota {
+            subject: subject.into(),
+            tool_call_limit: 100,
+            model_token_limit: 100_000,
+            memory_write_limit: 1_000,
+            event_limit: 1_000,
+            tool_calls_used: 0,
+            model_tokens_used: 0,
+            memory_writes_used: 0,
+            events_used: 0,
+        });
+    }
+
+    fn upsert_agentic_app(&mut self, app: AgenticApp) {
+        if let Some(existing) = self
+            .agentic_apps
+            .iter_mut()
+            .find(|item| item.name == app.name)
+        {
+            *existing = app;
+        } else {
+            self.agentic_apps.push(app);
+        }
+    }
+
+    fn ensure_process(
+        &mut self,
+        agent: &str,
+        parent: Option<String>,
+        role: AgentRole,
+        status: AgentStatus,
+        task: &str,
+        timestamp: &str,
+    ) {
+        if self
+            .process_table
+            .iter()
+            .any(|process| process.agent == agent)
+        {
+            return;
+        }
+        let pid = self
+            .process_table
+            .iter()
+            .map(|process| process.pid)
+            .max()
+            .unwrap_or(999)
+            + 1;
+        self.process_table.push(AgentProcess {
+            pid,
+            agent: agent.into(),
+            parent,
+            role,
+            status,
+            runtime: format!("local://agent/{agent}"),
+            task: task.into(),
+            memory_scope: format!("agent://{agent}/memory"),
+            tool_calls: 0,
+            model_tokens: 0,
+            events_emitted: 1,
+            started_at: timestamp.into(),
+            updated_at: timestamp.into(),
+        });
+    }
+
+    fn record_syscall(&mut self, record: SyscallRecord) {
+        self.syscalls.push(record);
     }
 
     fn record_agent_link(
@@ -1546,4 +2125,29 @@ pub(crate) fn dynamic_assignment_confidence(state: &OpsState) -> u8 {
         .saturating_add(infra_health_avg / 5)
         .saturating_sub(alert_penalty);
     score.clamp(20, 98) as u8
+}
+
+fn default_system_services() -> Vec<SystemService> {
+    let now = now_ts();
+    [
+        ("scheduler", "agent task queue and dispatch"),
+        ("event-bus", "append-only operational events"),
+        ("memory", "agent memory and semantic recall"),
+        ("policy", "capability and role enforcement"),
+        ("workflow", "DAG workflow runtime"),
+        ("apps", "agentic app/plugin runtime"),
+        ("observability", "metrics, timelines, and reports"),
+        ("security", "threat detection and audit"),
+        ("persistence", "state, replay, and vector memory"),
+    ]
+    .into_iter()
+    .map(|(name, notes)| SystemService {
+        name: name.into(),
+        status: "running".into(),
+        health: 100,
+        started_at: now.clone(),
+        last_heartbeat: now.clone(),
+        notes: notes.into(),
+    })
+    .collect()
 }

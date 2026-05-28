@@ -52,7 +52,7 @@ cargo test
 Expected test result:
 
 ```text
-27 passed
+37 passed
 ```
 
 ### 4. Run

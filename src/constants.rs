@@ -1,4 +1,4 @@
-pub(crate) const NAV_ITEMS: [(&str, char); 9] = [
+pub(crate) const NAV_ITEMS: [(&str, char); 10] = [
     ("Dashboard", '1'),
     ("Agents", '2'),
     ("Incidents", '3'),
@@ -8,6 +8,7 @@ pub(crate) const NAV_ITEMS: [(&str, char); 9] = [
     ("Workflows", '7'),
     ("Reports", '8'),
     ("Settings", '9'),
+    ("Chat", '0'),
 ];
 
 pub(crate) const DEFAULT_LOG_LIMIT: usize = 120;
@@ -17,6 +18,7 @@ pub(crate) const DEFAULT_EXPLAINABILITY_LIMIT: usize = 80;
 pub(crate) const DEFAULT_COORDINATION_LIMIT: usize = 80;
 pub(crate) const DEFAULT_TIMELINE_LIMIT: usize = 160;
 pub(crate) const DEFAULT_RECOVERY_LIMIT: usize = 40;
+pub(crate) const DEFAULT_SYSCALL_LIMIT: usize = 160;
 
 pub(crate) fn log_limit() -> usize {
     std::env::var("OCTOBOT_LOG_LIMIT")
@@ -60,8 +62,14 @@ pub(crate) fn recovery_limit() -> usize {
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_RECOVERY_LIMIT)
 }
+pub(crate) fn syscall_limit() -> usize {
+    std::env::var("OCTOBOT_SYSCALL_LIMIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_SYSCALL_LIMIT)
+}
 
-pub(crate) const COMMAND_SUGGESTIONS: [&str; 31] = [
+pub(crate) const COMMAND_SUGGESTIONS: [&str; 50] = [
     "multi-agent Assess Ollama readiness and report findings",
     "investigate local_model_health",
     "spawn-agent planner",
@@ -73,6 +81,7 @@ pub(crate) const COMMAND_SUGGESTIONS: [&str; 31] = [
     "role operator",
     "role admin",
     "role readonly",
+    "chat summarize the current system state",
     "replay start",
     "replay step",
     "exec uptime",
@@ -91,6 +100,24 @@ pub(crate) const COMMAND_SUGGESTIONS: [&str; 31] = [
     "sandbox policy operator restart",
     "sandbox policy admin rollback",
     "assign <agent_id> <task>",
+    "ps",
+    "agent spawn planner",
+    "pause <agent>",
+    "resume <agent>",
+    "kill <agent>",
+    "syscalls",
+    "policy show",
+    "policy grant agent-001 cmd:readonly",
+    "apps",
+    "run runbook-index",
+    "memory search checkout",
+    "workspace write operator agent://workspace/note.md note",
+    "marketplace import local-tool",
+    "services",
+    "supervisor",
+    "boot status",
+    "ipc send agent-001 topic payload",
+    "agent spawn executor",
     "login ollama <url>",
     "login ollama http://localhost:11434",
 ];

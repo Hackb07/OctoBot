@@ -37,7 +37,7 @@ That's it. OctoBot runs immediately with zero configuration — all optional fea
 - [ ] `git clone https://github.com/your-org/OctoBot.git`
 - [ ] `cd OctoBot`
 - [ ] `cargo build --release` (first build: ~3 min)
-- [ ] `cargo test` — verify 27 tests pass
+- [ ] `cargo test` — verify 37 tests pass
 - [ ] `cargo check` — verify zero compilation errors
 
 ### 3. Run Without Any Backend
@@ -129,7 +129,7 @@ Each backend is independently optional. OctoBot runs without any of them.
 
 ### 6. Verify Everything Works
 
-- [ ] `cargo test` → 27 passed
+- [ ] `cargo test` → 37 passed
 - [ ] `cargo check` → zero errors (warnings are expected for unused pub items)
 - [ ] Launch with `./target/release/OctoBot` → TUI shows dashboard
 - [ ] Press `?` → help overlay appears

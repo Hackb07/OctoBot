@@ -80,9 +80,7 @@ impl Plugin for ExternalScriptPlugin {
         if !self.running {
             return Err("plugin is not running".into());
         }
-        if let Some(reason) = SecurityPolicy::detect_prompt_attack(input) {
-            return Err(format!("plugin input rejected: {reason}"));
-        }
+        PluginSecurity::enforce_runtime_boundaries(&self.descriptor, input)?;
         let output = std::process::Command::new(&self.script_path)
             .arg(SecurityPolicy::sanitize_prompt(input))
             .output()
@@ -161,9 +159,7 @@ impl Plugin for NativePlugin {
         if !self.running {
             return Err("plugin is not enabled".into());
         }
-        if let Some(reason) = SecurityPolicy::detect_prompt_attack(input) {
-            return Err(format!("plugin input rejected: {reason}"));
-        }
+        PluginSecurity::enforce_runtime_boundaries(&self.descriptor, input)?;
         let result = format!(
             "plugin {} processed: {}",
             self.descriptor.name,

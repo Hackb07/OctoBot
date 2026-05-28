@@ -1,4 +1,8 @@
-use std::{io, time::Duration};
+use std::{
+    io,
+    path::{Component, Path, PathBuf},
+    time::Duration,
+};
 
 use crossterm::event::{self, Event as TerminalEvent, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
@@ -16,13 +20,18 @@ use tokio::{
 use crate::{
     constants::{COMMAND_SUGGESTIONS, NAV_ITEMS},
     models::{
-        AgentRole, AgentRuntime, AgentRuntimeKind, AgentStatus, ExecutionRecord, KnowledgeEdge,
-        OpsEvent, OpsState, PluginDescriptor, PluginKind, PluginStatus, RecoveryAction,
-        RecoveryStatus, RuntimeStatus, UserRole,
+        AgentRole, AgentRuntime, AgentRuntimeKind, AgentStatus, AppPackage, ConversationMessage,
+        ExecutionRecord, IpcMessage, KnowledgeEdge, OpsEvent, OpsState, PluginDescriptor,
+        PluginKind, PluginStatus, PolicyGrant, RecoveryAction, RecoveryStatus, RuntimeStatus,
+        UserRole, WorkspaceArtifact,
     },
     reports::write_report_json,
     utils::{next_agent_name, next_id, now_ts},
 };
+
+const ACCENT: Color = Color::Cyan;
+const MUTED: Color = Color::DarkGray;
+const PANEL_BORDER: Color = Color::DarkGray;
 
 #[derive(Debug)]
 pub(crate) struct App {
@@ -80,10 +89,11 @@ impl App {
 
     fn draw(&self, frame: &mut Frame) {
         let root = Layout::vertical([
-            Constraint::Length(3),
+            Constraint::Length(2),
             Constraint::Min(12),
-            Constraint::Length(5),
+            Constraint::Length(4),
         ])
+        .margin(1)
         .split(frame.area());
 
         self.draw_top_bar(frame, root[0]);
@@ -101,25 +111,22 @@ impl App {
     fn draw_top_bar(&self, frame: &mut Frame, area: Rect) {
         let uptime = format_duration(self.state.uptime_secs);
         let info_line = Line::from(vec![
-            " OctoBot ".bold().fg(Color::Cyan),
+            " OctoBot ".bold().fg(ACCENT),
             self.state.workspace.as_str().into(),
-            "  env ".dark_gray(),
+            "  env ".fg(MUTED),
             self.state.environment.as_str().yellow(),
-            "  agents ".dark_gray(),
+            "  agents ".fg(MUTED),
             self.state.active_agents.to_string().green(),
-            "  health ".dark_gray(),
+            "  health ".fg(MUTED),
             format!("{}%", self.state.health).fg(health_color(self.state.health)),
-            "  alerts ".dark_gray(),
+            "  alerts ".fg(MUTED),
             self.state.alert_count.to_string().red(),
-            "  role ".dark_gray(),
+            "  role ".fg(MUTED),
             format!("{:?}", self.state.current_role).magenta(),
-            "  uptime ".dark_gray(),
+            "  uptime ".fg(MUTED),
             uptime.into(),
         ]);
-        frame.render_widget(
-            Paragraph::new(info_line.clone()).block(Block::bordered()),
-            area,
-        );
+        frame.render_widget(Paragraph::new(info_line).block(top_bar_block()), area);
     }
 
     fn draw_nav(&self, frame: &mut Frame, area: Rect) {
@@ -131,25 +138,22 @@ impl App {
                 let style = if idx == self.selected_nav {
                     Style::default()
                         .fg(Color::Black)
-                        .bg(Color::Cyan)
+                        .bg(ACCENT)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default()
+                    Style::default().fg(Color::Gray)
                 };
                 ListItem::new(Line::from(vec![
                     Span::raw(marker),
                     Span::raw(" "),
-                    Span::styled(format!("[{}] ", key), Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!("[{}] ", key), Style::default().fg(MUTED)),
                     Span::raw(*name),
                 ]))
                 .style(style)
             })
             .collect();
 
-        frame.render_widget(
-            List::new(items).block(Block::bordered().title(" Navigation ")),
-            area,
-        );
+        frame.render_widget(List::new(items).block(panel("Navigation")), area);
     }
 
     fn draw_main(&self, frame: &mut Frame, area: Rect) {
@@ -162,6 +166,7 @@ impl App {
             6 => self.draw_workflows(frame, area),
             7 => self.draw_reports(frame, area),
             8 => self.draw_settings(frame, area),
+            9 => self.draw_chat(frame, area),
             _ => self.draw_dashboard(frame, area),
         }
     }
@@ -223,8 +228,7 @@ impl App {
     fn draw_system_metrics(&self, frame: &mut Frame, area: Rect) {
         if self.state.infra.is_empty() {
             frame.render_widget(
-                Paragraph::new(" No infrastructure nodes")
-                    .block(Block::bordered().title(" Node Metrics ")),
+                Paragraph::new(" No infrastructure nodes").block(panel("Node Metrics")),
                 area,
             );
             return;
@@ -256,21 +260,15 @@ impl App {
                     Constraint::Length(6),
                 ],
             )
-            .header(
-                Row::new(vec!["", "node", "health", "cpu", "mem"])
-                    .style(Style::default().fg(Color::Cyan)),
-            )
-            .block(Block::bordered().title(" Node Metrics ")),
+            .header(Row::new(vec!["", "node", "health", "cpu", "mem"]).style(header_style()))
+            .block(panel("Node Metrics")),
             area,
         );
     }
 
     fn draw_event_preview(&self, frame: &mut Frame, area: Rect) {
         if self.state.events.is_empty() {
-            frame.render_widget(
-                Paragraph::new(" No events").block(Block::bordered().title(" Events ")),
-                area,
-            );
+            frame.render_widget(Paragraph::new(" No events").block(panel("Events")), area);
             return;
         }
         let rows: Vec<Row> = self
@@ -292,8 +290,8 @@ impl App {
             .collect();
         frame.render_widget(
             Table::new(rows, [Constraint::Length(10), Constraint::Min(24)])
-                .header(Row::new(vec!["time", "event"]).style(Style::default().fg(Color::Cyan)))
-                .block(Block::bordered().title(" Events ")),
+                .header(Row::new(vec!["time", "event"]).style(header_style()))
+                .block(panel("Events")),
             area,
         );
     }
@@ -301,7 +299,7 @@ impl App {
     fn draw_metric_card(&self, frame: &mut Frame, area: Rect, title: &str, value: u8) {
         frame.render_widget(
             Gauge::default()
-                .block(Block::bordered().title(format!(" {} ", title)))
+                .block(panel(title))
                 .gauge_style(Style::default().fg(health_color(value)).bg(Color::Black))
                 .percent(value as u16)
                 .label(format!("{}%", value)),
@@ -343,10 +341,9 @@ impl App {
                 ],
             )
             .header(
-                Row::new(["st", "name", "role", "status", "current task"])
-                    .style(Style::default().fg(Color::Cyan)),
+                Row::new(["st", "name", "role", "status", "current task"]).style(header_style()),
             )
-            .block(Block::bordered().title(" Agent Orchestration ")),
+            .block(panel("Agents")),
             chunks[0],
         );
 
@@ -376,11 +373,8 @@ impl App {
                     Constraint::Min(28),
                 ],
             )
-            .header(
-                Row::new(["edge", "protocol", "score", "latest message"])
-                    .style(Style::default().fg(Color::Cyan)),
-            )
-            .block(Block::bordered().title(" Coordination Graph ")),
+            .header(Row::new(["edge", "protocol", "score", "latest message"]).style(header_style()))
+            .block(panel("Coordination")),
             lower[0],
         );
 
@@ -405,10 +399,9 @@ impl App {
                 ],
             )
             .header(
-                Row::new(["agent", "runtime", "endpoint", "status", "notes"])
-                    .style(Style::default().fg(Color::Cyan)),
+                Row::new(["agent", "runtime", "endpoint", "status", "notes"]).style(header_style()),
             )
-            .block(Block::bordered().title(" Distributed Execution ")),
+            .block(panel("Runtimes")),
             lower[1],
         );
     }
@@ -436,9 +429,9 @@ impl App {
             )
             .header(
                 Row::new(["id", "sev", "service", "status", "active hypothesis"])
-                    .style(Style::default().fg(Color::Cyan)),
+                    .style(header_style()),
             )
-            .block(Block::bordered().title(" Incident Investigations ")),
+            .block(panel("Incidents")),
             area,
         );
     }
@@ -467,7 +460,7 @@ impl App {
             .collect::<Vec<_>>()
             .join(", ");
         let mut lines = vec![
-            Line::from(format!("research-root: {}", profile.subject)).fg(Color::Cyan),
+            Line::from(format!("research-root: {}", profile.subject)).fg(ACCENT),
             Line::from(format!(
                 "confidence: {}%  reliability: {}%  contradictions: {}",
                 profile.ranking, profile.evidence_reliability, profile.contradiction_count
@@ -502,7 +495,7 @@ impl App {
                 self.state.knowledge_edges.len()
             )),
             Line::from(""),
-            Line::from("recent signals:").fg(Color::Cyan),
+            Line::from("recent signals:").fg(ACCENT),
         ];
         lines.extend(profile.signals.iter().rev().take(8).map(|signal| {
             Line::from(format!(
@@ -518,7 +511,7 @@ impl App {
             ))
         }));
         lines.push(Line::from(""));
-        lines.push(Line::from("knowledge graph:").fg(Color::Cyan));
+        lines.push(Line::from("knowledge graph:").fg(ACCENT));
         lines.extend(self.state.knowledge_edges.iter().rev().take(6).map(|edge| {
             Line::from(format!(
                 "- {} {} {} (weight {}%)",
@@ -526,7 +519,7 @@ impl App {
             ))
         }));
         lines.push(Line::from(""));
-        lines.push(Line::from("latest explainability records:").fg(Color::Cyan));
+        lines.push(Line::from("latest explainability records:").fg(ACCENT));
         lines.extend(
             self.state
                 .explainability
@@ -544,7 +537,7 @@ impl App {
         );
         frame.render_widget(
             Paragraph::new(lines)
-                .block(Block::bordered().title(" Deep Research Tree "))
+                .block(panel("Research"))
                 .wrap(Wrap { trim: true }),
             area,
         );
@@ -564,10 +557,7 @@ impl App {
                 .map(|line| ListItem::new(line.as_str()))
                 .collect::<Vec<_>>()
         };
-        frame.render_widget(
-            List::new(items).block(Block::bordered().title(" Real Logs ")),
-            area,
-        );
+        frame.render_widget(List::new(items).block(panel("Logs")), area);
     }
 
     fn draw_infra(&self, frame: &mut Frame, area: Rect) {
@@ -598,11 +588,8 @@ impl App {
                     Constraint::Length(8),
                 ],
             )
-            .header(
-                Row::new(["resource", "kind", "health", "cpu", "mem"])
-                    .style(Style::default().fg(Color::Cyan)),
-            )
-            .block(Block::bordered().title(" Infrastructure ")),
+            .header(Row::new(["resource", "kind", "health", "cpu", "mem"]).style(header_style()))
+            .block(panel("Infrastructure")),
             split[0],
         );
 
@@ -627,11 +614,8 @@ impl App {
                     Constraint::Length(6),
                 ],
             )
-            .header(
-                Row::new(["id", "real command", "status", "exit"])
-                    .style(Style::default().fg(Color::Cyan)),
-            )
-            .block(Block::bordered().title(" Infrastructure Execution ")),
+            .header(Row::new(["id", "real command", "status", "exit"]).style(header_style()))
+            .block(panel("Executions")),
             split[1],
         );
 
@@ -665,9 +649,9 @@ impl App {
             )
             .header(
                 Row::new(["time", "kind", "source", "cpu", "mem", "correlation"])
-                    .style(Style::default().fg(Color::Cyan)),
+                    .style(header_style()),
             )
-            .block(Block::bordered().title(" Time Travel Correlation ")),
+            .block(panel("Timeline")),
             split[2],
         );
     }
@@ -675,8 +659,7 @@ impl App {
     fn draw_infra_compact(&self, frame: &mut Frame, area: Rect) {
         if self.state.infra.is_empty() {
             frame.render_widget(
-                Paragraph::new(" No infrastructure")
-                    .block(Block::bordered().title(" Infrastructure ")),
+                Paragraph::new(" No infrastructure").block(panel("Infrastructure")),
                 area,
             );
             return;
@@ -707,11 +690,8 @@ impl App {
                     Constraint::Length(6),
                 ],
             )
-            .header(
-                Row::new(vec!["", "node", "health", "cpu", "mem"])
-                    .style(Style::default().fg(Color::Cyan)),
-            )
-            .block(Block::bordered().title(" Infrastructure ")),
+            .header(Row::new(vec!["", "node", "health", "cpu", "mem"]).style(header_style()))
+            .block(panel("Infrastructure")),
             area,
         );
     }
@@ -739,11 +719,8 @@ impl App {
                     Constraint::Length(8),
                 ],
             )
-            .header(
-                Row::new(["id", "workflow", "owner", "stage", "done"])
-                    .style(Style::default().fg(Color::Cyan)),
-            )
-            .block(Block::bordered().title(" Workflow Monitor ")),
+            .header(Row::new(["id", "workflow", "owner", "stage", "done"]).style(header_style()))
+            .block(panel("Workflows")),
             split[0],
         );
 
@@ -773,11 +750,8 @@ impl App {
                     Constraint::Min(24),
                 ],
             )
-            .header(
-                Row::new(["id", "target", "status", "approval", "risk"])
-                    .style(Style::default().fg(Color::Cyan)),
-            )
-            .block(Block::bordered().title(" Autonomous Recovery Queue ")),
+            .header(Row::new(["id", "target", "status", "approval", "risk"]).style(header_style()))
+            .block(panel("Recovery")),
             split[1],
         );
     }
@@ -806,9 +780,61 @@ impl App {
                     ))
                 }),
         );
+        frame.render_widget(List::new(items).block(panel("Reports")), area);
+    }
+
+    fn draw_chat(&self, frame: &mut Frame, area: Rect) {
+        let split = Layout::vertical([Constraint::Min(8), Constraint::Length(3)]).split(area);
+        let mut messages = self
+            .state
+            .conversation
+            .iter()
+            .rev()
+            .take(12)
+            .collect::<Vec<_>>();
+        messages.reverse();
+
+        let lines = if messages.is_empty() {
+            vec![
+                Line::from("No conversation yet.").fg(Color::Gray),
+                Line::from("Press / and type: chat summarize the current system state").fg(MUTED),
+            ]
+        } else {
+            let mut lines = Vec::new();
+            for message in messages {
+                let (role, style) = if message.role == "user" {
+                    (
+                        "You",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    ("OctoBot", header_style())
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{role}: "), style),
+                    Span::raw(message.content.clone()),
+                ]));
+                lines.push(Line::from(""));
+            }
+            lines
+        };
+
         frame.render_widget(
-            List::new(items).block(Block::bordered().title(" Explainable Reports ")),
-            area,
+            Paragraph::new(lines)
+                .block(panel("Conversation"))
+                .style(Style::default().fg(Color::Gray))
+                .wrap(Wrap { trim: false }),
+            split[0],
+        );
+        frame.render_widget(
+            Paragraph::new(
+                "Press / then type chat <message>. Answers appear above and wrap across lines.",
+            )
+            .block(panel("Chat Input"))
+            .wrap(Wrap { trim: true }),
+            split[1],
         );
     }
 
@@ -817,40 +843,23 @@ impl App {
             x: area.x + 4,
             y: area.y + 2,
             width: area.width.saturating_sub(8).min(72),
-            height: area.height.saturating_sub(4).min(30),
+            height: area.height.saturating_sub(4).min(24),
         };
         let lines = vec![
-            Line::from(" ┌─────────────────────────────────────────────────────┐").fg(Color::Cyan),
-            Line::from(" │                 Keyboard Shortcuts                  │").fg(Color::Cyan),
-            Line::from(" ├─────────────────────────────────────────────────────┤").fg(Color::Cyan),
-            Line::from(" │ q           Quit                                    │").into(),
-            Line::from(" │ /           Enter command mode                      │").into(),
-            Line::from(" │ ? or h      Toggle this help overlay                │").into(),
-            Line::from(" │ Tab / j/k   Next / previous navigation tab          │").into(),
-            Line::from(" │ 1-9         Jump to navigation tab                  │").into(),
-            Line::from(" │ Esc         Exit command mode / close help          │").into(),
-            Line::from(" │ Enter       Execute typed command                   │").into(),
-            Line::from(" ├─────────────────────────────────────────────────────┤").fg(Color::Cyan),
-            Line::from(" │                    Commands                         │").fg(Color::Cyan),
-            Line::from(" ├─────────────────────────────────────────────────────┤").fg(Color::Cyan),
-            Line::from(" │ /multi-agent <task>     Multi-agent investigation    │").into(),
-            Line::from(" │ /investigate <service>  Create incident             │").into(),
-            Line::from(" │ /spawn-agent <role>     Launch AI agent             │").into(),
-            Line::from(" │ /exec <command>         Run infra command           │").into(),
-            Line::from(" │ /recover <target>       Propose recovery action     │").into(),
-            Line::from(" │ /approve <action_id>    Approve recovery            │").into(),
-            Line::from(" │ /replay start|step      Replay event timeline       │").into(),
-            Line::from(" │ /role <admin|operator>  Change user role            │").into(),
-            Line::from(" │ /plugin add|enable|disable <name>  Plugin mgmt      │").into(),
-            Line::from(" │ /research confidence    View research profile       │").into(),
-            Line::from(" │ /login ollama <url>     Point to local Ollama       │").into(),
-            Line::from(" │ /tasks-report           Report last 50 tasks        │").into(),
-            Line::from(" └─────────────────────────────────────────────────────┘").fg(Color::Cyan),
+            Line::from("Keyboard").fg(ACCENT),
+            Line::from("q quit     / command     h or ? help     Tab switch     1-9 or 0 jump"),
+            Line::from("j/k or arrows move       Esc close command/help       Enter run"),
+            Line::from(""),
+            Line::from("Common commands").fg(ACCENT),
+            Line::from("/multi-agent <task>       /investigate <service>      /chat <request>"),
+            Line::from("/spawn-agent <role>       /exec <command>             /recover <target>"),
+            Line::from("/approve <action_id>      /replay start|step          /tasks-report"),
+            Line::from("/role <admin|operator>    /plugin add|enable|disable  /policy show"),
         ];
         frame.render_widget(
             Paragraph::new(lines)
-                .block(Block::bordered().style(Style::default().bg(Color::Black)))
-                .alignment(Alignment::Center),
+                .block(panel("Help").style(Style::default().bg(Color::Black)))
+                .wrap(Wrap { trim: true }),
             overlay,
         );
     }
@@ -858,7 +867,7 @@ impl App {
     fn draw_settings(&self, frame: &mut Frame, area: Rect) {
         let tabs = Tabs::new(["Security", "Ollama", "Plugins", "Sandbox", "Replay"])
             .block(Block::new().borders(Borders::BOTTOM))
-            .highlight_style(Style::default().fg(Color::Cyan));
+            .highlight_style(header_style());
         let chunks = Layout::vertical([
             Constraint::Length(3),
             Constraint::Percentage(24),
@@ -944,7 +953,7 @@ impl App {
         );
         frame.render_widget(
             Gauge::default()
-                .block(Block::bordered().title(" Integrity "))
+                .block(panel("Integrity"))
                 .gauge_style(
                     Style::default()
                         .fg(health_color(summary.runtime_integrity))
@@ -970,7 +979,7 @@ impl App {
                 Line::from(title).alignment(Alignment::Center),
             ])
             .style(Style::default().fg(color).add_modifier(Modifier::BOLD))
-            .block(Block::bordered()),
+            .block(plain_panel()),
             area,
         );
     }
@@ -1003,10 +1012,9 @@ impl App {
                 ],
             )
             .header(
-                Row::new(["id", "status", "command audit", "policy output"])
-                    .style(Style::default().fg(Color::Cyan)),
+                Row::new(["id", "status", "command audit", "policy output"]).style(header_style()),
             )
-            .block(Block::bordered().title(" Command Security Audit ")),
+            .block(panel("Command Audit")),
             area,
         );
     }
@@ -1031,11 +1039,8 @@ impl App {
                     Constraint::Min(12),
                 ],
             )
-            .header(
-                Row::new(["plugin", "kind", "status", "security"])
-                    .style(Style::default().fg(Color::Cyan)),
-            )
-            .block(Block::bordered().title(" Plugin Security Monitor ")),
+            .header(Row::new(["plugin", "kind", "status", "security"]).style(header_style()))
+            .block(panel("Plugin Security")),
             area,
         );
     }
@@ -1085,7 +1090,7 @@ impl App {
                 )),
                 Line::from(format!("current role: {:?}", self.state.current_role)),
             ])
-            .block(Block::bordered().title(" Resource & Sandbox Protection "))
+            .block(panel("Runtime Protection"))
             .wrap(Wrap { trim: true }),
             area,
         );
@@ -1117,11 +1122,8 @@ impl App {
                     Constraint::Min(18),
                 ],
             )
-            .header(
-                Row::new(["time", "threat event", "score", "evidence"])
-                    .style(Style::default().fg(Color::Cyan)),
-            )
-            .block(Block::bordered().title(" Threat Timeline ")),
+            .header(Row::new(["time", "threat event", "score", "evidence"]).style(header_style()))
+            .block(panel("Threat Timeline")),
             area,
         );
     }
@@ -1132,7 +1134,7 @@ impl App {
                 "alerts: {}",
                 SecurityUiSummary::from_state(&self.state).vulnerability_alerts
             ))
-            .fg(Color::Cyan),
+            .fg(ACCENT),
             Line::from(format!(
                 "workflow risk: {} pending approvals",
                 self.state
@@ -1177,7 +1179,7 @@ impl App {
         );
         frame.render_widget(
             Paragraph::new(lines)
-                .block(Block::bordered().title(" Vulnerability & Workflow Risk "))
+                .block(panel("Risk"))
                 .wrap(Wrap { trim: true }),
             area,
         );
@@ -1193,7 +1195,7 @@ impl App {
             "replay idle".into()
         };
         let mut lines = vec![
-            Line::from(replay_status).fg(Color::Cyan),
+            Line::from(replay_status).fg(ACCENT),
             Line::from(format!(
                 "last: {}",
                 self.state
@@ -1203,7 +1205,7 @@ impl App {
                     .unwrap_or_else(|| "-".into())
             )),
             Line::from(""),
-            Line::from("security event replay:").fg(Color::Cyan),
+            Line::from("security event replay:").fg(ACCENT),
         ];
         lines.extend(
             self.state
@@ -1235,7 +1237,7 @@ impl App {
         );
         frame.render_widget(
             Paragraph::new(lines)
-                .block(Block::bordered().title(" Security Replay & AI Trace "))
+                .block(panel("Replay"))
                 .wrap(Wrap { trim: true }),
             area,
         );
@@ -1267,7 +1269,7 @@ impl App {
                 )),
                 Line::from(format!("Current role: {:?}", self.state.current_role)),
             ])
-            .block(Block::bordered().title(" Integration Settings "))
+            .block(panel("Settings"))
             .wrap(Wrap { trim: true }),
             area,
         );
@@ -1278,7 +1280,7 @@ impl App {
         let text = if self.command_mode {
             format!("{prompt}{}", self.command)
         } else {
-            "press / | h/? help | Tab switch views | exec uptime | j/k | 1-9 | q".into()
+            "press / | h/? help | Tab switch views | 1-9 views | 0 chat | q".into()
         };
         let hint = if self.command_mode {
             command_completion(&self.command)
@@ -1297,7 +1299,7 @@ impl App {
         };
         frame.render_widget(
             Paragraph::new(vec![Line::from(text), Line::from(hint.fg(Color::DarkGray))])
-                .block(Block::bordered().title(" Command Console ")),
+                .block(panel("Console")),
             area,
         );
         if self.command_mode {
@@ -1354,6 +1356,7 @@ impl App {
             KeyCode::Char(c @ '1'..='9') => {
                 self.selected_nav = (c as usize - '1' as usize).min(NAV_ITEMS.len() - 1)
             }
+            KeyCode::Char('0') => self.selected_nav = NAV_ITEMS.len() - 1,
             _ => {}
         }
     }
@@ -1375,6 +1378,47 @@ impl App {
         }
     }
 
+    fn handle_chat_file_request(&mut self, request: ChatFileRequest, timestamp: String) {
+        match write_chat_file(&request) {
+            Ok(path) => {
+                let bytes = request.content.as_bytes().len();
+                let _ = self.event_tx.send(OpsEvent::WorkspaceArtifactRecorded {
+                    artifact: WorkspaceArtifact {
+                        id: next_id("artifact"),
+                        owner: "chat-agent".into(),
+                        path: path.display().to_string(),
+                        kind: "chat-created-file".into(),
+                        bytes,
+                        immutable: false,
+                        created_at: timestamp.clone(),
+                    },
+                });
+                let _ = self.event_tx.send(OpsEvent::ConversationMessageRecorded {
+                    message: ConversationMessage {
+                        id: next_id("chat"),
+                        role: "assistant".into(),
+                        content: format!("Created `{}` with {} bytes.", path.display(), bytes),
+                        model: "chat-file-writer".into(),
+                        confidence: 100,
+                        timestamp,
+                    },
+                });
+            }
+            Err(error) => {
+                let _ = self.event_tx.send(OpsEvent::ConversationMessageRecorded {
+                    message: ConversationMessage {
+                        id: next_id("chat"),
+                        role: "assistant".into(),
+                        content: format!("I could not create that file: {error}"),
+                        model: "chat-file-writer".into(),
+                        confidence: 100,
+                        timestamp,
+                    },
+                });
+            }
+        }
+    }
+
     fn execute_command(&mut self) {
         let command = self.command.trim().to_string();
         if command.is_empty() {
@@ -1388,7 +1432,41 @@ impl App {
             timestamp: now_ts(),
         });
 
-        if command.starts_with("investigate") {
+        if let Some(prompt) = command.strip_prefix("chat ") {
+            self.selected_nav = 9;
+            let timestamp = now_ts();
+            let prompt = prompt.trim().to_string();
+            let _ = self.event_tx.send(OpsEvent::ConversationMessageRecorded {
+                message: ConversationMessage {
+                    id: next_id("chat"),
+                    role: "user".into(),
+                    content: prompt.clone(),
+                    model: "operator".into(),
+                    confidence: 100,
+                    timestamp: timestamp.clone(),
+                },
+            });
+            if let Some(request) = parse_chat_file_request(&prompt) {
+                self.handle_chat_file_request(request, timestamp);
+                self.command_mode = false;
+                self.command.clear();
+                return;
+            }
+            let agent_id = next_id("chat-agent");
+            let role = chat_agent_role(&prompt);
+            let _ = self.event_tx.send(OpsEvent::AgentSpawned {
+                name: agent_id.clone(),
+                role,
+                timestamp: timestamp.clone(),
+            });
+            let _ = self.event_tx.send(OpsEvent::TaskAssigned {
+                agent: agent_id,
+                task: format!(
+                    "[ChatQuery]\nUser question:\n{prompt}\n\nInstructions: Answer this user in the Chat tab. Be direct, useful, and honest about uncertainty. Use OctoBot context when relevant."
+                ),
+                timestamp,
+            });
+        } else if command.starts_with("investigate") {
             self.selected_nav = 2;
             let incident_id = command
                 .split_whitespace()
@@ -1426,6 +1504,310 @@ impl App {
                 )
                 .into(),
             );
+        } else if command.starts_with("agent spawn") || command.starts_with("spawn-agent") {
+            self.selected_nav = 1;
+            let role = command
+                .strip_prefix("agent spawn ")
+                .or_else(|| command.strip_prefix("spawn-agent "))
+                .and_then(|r| match r.trim() {
+                    "planner" => Some(AgentRole::Planner),
+                    "executor" => Some(AgentRole::Executor),
+                    _ => Some(AgentRole::Research),
+                })
+                .unwrap_or(AgentRole::Research);
+            let agent_id = next_agent_name();
+            let _ = self.event_tx.send(OpsEvent::AgentSpawned {
+                name: agent_id.clone(),
+                role: role.clone(),
+                timestamp: now_ts(),
+            });
+            let _ = self.event_tx.send(OpsEvent::TaskAssigned {
+                agent: agent_id.clone(),
+                task: format!("{:?} agent {agent_id} initialized — analyze current system state and report findings", role),
+                timestamp: now_ts(),
+            });
+        } else if command == "ps" {
+            self.selected_nav = 7;
+            let mut lines = vec![
+                "PID    AGENT              ROLE       STATUS     TOOLS  TOKENS TASK".to_string(),
+            ];
+            for process in &self.state.process_table {
+                lines.push(format!(
+                    "{:<6} {:<18} {:<10?} {:<10?} {:<6} {:<6} {}",
+                    process.pid,
+                    process.agent,
+                    process.role,
+                    process.status,
+                    process.tool_calls,
+                    process.model_tokens,
+                    process.task
+                ));
+            }
+            if self.state.process_table.is_empty() {
+                lines.push("No agent processes registered.".into());
+            }
+            let _ = self.event_tx.send(OpsEvent::ResearchCompleted {
+                topic: "agent-process-table".into(),
+                conclusion: lines.join("\n"),
+                confidence: 100,
+                timestamp: now_ts(),
+            });
+        } else if command == "syscalls" {
+            self.selected_nav = 7;
+            let mut lines = vec![
+                "LAST AGENT              CALL            CAPABILITY   ALLOWED REASON".to_string(),
+            ];
+            for record in self.state.syscalls.iter().rev().take(30).rev() {
+                lines.push(format!(
+                    "{} {:<18} {:<15} {:<12} {:<7} {}",
+                    &record.timestamp[record.timestamp.len().saturating_sub(8)..],
+                    record.agent,
+                    record.call,
+                    record.capability,
+                    record.allowed,
+                    record.reason
+                ));
+            }
+            if self.state.syscalls.is_empty() {
+                lines.push("No syscalls recorded yet.".into());
+            }
+            let _ = self.event_tx.send(OpsEvent::ResearchCompleted {
+                topic: "syscall-audit".into(),
+                conclusion: lines.join("\n"),
+                confidence: 100,
+                timestamp: now_ts(),
+            });
+        } else if command == "policy show" {
+            self.selected_nav = 7;
+            let policy = &self.state.sandbox_policy;
+            let conclusion = format!(
+                "mode: {}\npersisted: {}\napproved_roles: {:?}\nreview_required_for: {:?}",
+                policy.mode, policy.persisted, policy.approved_roles, policy.review_required_for
+            );
+            let _ = self.event_tx.send(OpsEvent::ResearchCompleted {
+                topic: "policy-show".into(),
+                conclusion,
+                confidence: 100,
+                timestamp: now_ts(),
+            });
+        } else if command == "apps" {
+            self.selected_nav = 7;
+            let mut lines =
+                vec!["STATUS      KIND        NAME                 VERSION OWNER".to_string()];
+            for app in &self.state.agentic_apps {
+                lines.push(format!(
+                    "{:<11} {:<20} {:<7} {}",
+                    app.status,
+                    app.name,
+                    app.version,
+                    app.permissions.join(",")
+                ));
+            }
+            if self.state.agentic_apps.is_empty() {
+                lines.push("No agentic apps/plugins installed.".into());
+            }
+            let _ = self.event_tx.send(OpsEvent::ResearchCompleted {
+                topic: "agentic-apps".into(),
+                conclusion: lines.join("\n"),
+                confidence: 100,
+                timestamp: now_ts(),
+            });
+        } else if let Some(raw) = command.strip_prefix("run ") {
+            self.selected_nav = 6;
+            let target = raw.trim();
+            if self
+                .state
+                .plugins
+                .iter()
+                .any(|plugin| plugin.name == target)
+            {
+                let _ = self.event_tx.send(OpsEvent::IpcMessageRecorded {
+                    message: IpcMessage {
+                        id: next_id("ipc"),
+                        from: "agentic-shell".into(),
+                        to: target.into(),
+                        topic: "app.run".into(),
+                        payload: format!("run app {target}"),
+                        delivered: true,
+                        timestamp: now_ts(),
+                    },
+                });
+            } else {
+                let _ = self.event_tx.send(OpsEvent::WorkflowAdvanced {
+                    id: target.into(),
+                    stage: "started from agentic shell".into(),
+                    progress: 1,
+                    timestamp: now_ts(),
+                });
+            }
+        } else if let Some(query) = command.strip_prefix("memory search ") {
+            self.selected_nav = 7;
+            let needle = query.trim().to_ascii_lowercase();
+            let mut lines =
+                vec!["SCOPE              KIND       KEY                  PREVIEW".to_string()];
+            for entry in &self.state.agent_memory {
+                let haystack =
+                    format!("{} {} {}", entry.scope, entry.key, entry.preview).to_ascii_lowercase();
+                if haystack.contains(&needle) {
+                    lines.push(format!(
+                        "{:<18} {:<10} {:<20} {}",
+                        entry.scope, entry.kind, entry.key, entry.preview
+                    ));
+                }
+            }
+            if lines.len() == 1 {
+                lines.push("No matching local agent memory entries.".into());
+            }
+            let _ = self.event_tx.send(OpsEvent::ResearchCompleted {
+                topic: format!("memory-search-{query}"),
+                conclusion: lines.join("\n"),
+                confidence: 90,
+                timestamp: now_ts(),
+            });
+        } else if let Some(raw) = command.strip_prefix("workspace write ") {
+            self.selected_nav = 7;
+            let mut parts = raw.split_whitespace();
+            let owner = parts.next().unwrap_or("operator");
+            let path = parts.next().unwrap_or("agent://workspace/manual-note.md");
+            let body = parts.collect::<Vec<_>>().join(" ");
+            let _ = self.event_tx.send(OpsEvent::WorkspaceArtifactRecorded {
+                artifact: WorkspaceArtifact {
+                    id: next_id("artifact"),
+                    owner: owner.into(),
+                    path: path.into(),
+                    kind: "scratchpad".into(),
+                    bytes: body.len(),
+                    immutable: false,
+                    created_at: now_ts(),
+                },
+            });
+        } else if let Some(raw) = command.strip_prefix("policy grant ") {
+            self.selected_nav = 8;
+            let mut parts = raw.split_whitespace();
+            let subject = parts.next().unwrap_or("operator");
+            let capability = parts.next().unwrap_or("cmd:readonly");
+            let _ = self.event_tx.send(OpsEvent::PolicyGrantUpdated {
+                grant: PolicyGrant {
+                    id: next_id("grant"),
+                    subject: subject.into(),
+                    capability: capability.into(),
+                    active: true,
+                    reason: "granted from agentic shell".into(),
+                    granted_at: now_ts(),
+                },
+            });
+        } else if let Some(name) = command.strip_prefix("marketplace import ") {
+            self.selected_nav = 8;
+            let name = name.trim();
+            let _ = self.event_tx.send(OpsEvent::AppPackageImported {
+                package: AppPackage {
+                    name: name.into(),
+                    version: "0.1.0".into(),
+                    signed: true,
+                    dependencies: Vec::new(),
+                    source: "local-import".into(),
+                    installed: true,
+                },
+            });
+            let plugin = PluginDescriptor {
+                name: name.into(),
+                kind: PluginKind::Tool,
+                description: "marketplace-imported agentic app".into(),
+                version: "0.1.0".into(),
+                status: PluginStatus::Registered,
+                owner: "marketplace".into(),
+            };
+            let _ = self.event_tx.send(OpsEvent::PluginRegistered { plugin });
+        } else if command == "services" {
+            self.selected_nav = 7;
+            let mut lines = vec!["SERVICE          STATUS     HEALTH NOTES".to_string()];
+            for service in &self.state.system_services {
+                lines.push(format!(
+                    "{:<16} {:<10} {:>3}%   {}",
+                    service.name, service.status, service.health, service.notes
+                ));
+            }
+            let _ = self.event_tx.send(OpsEvent::ResearchCompleted {
+                topic: "system-services".into(),
+                conclusion: lines.join("\n"),
+                confidence: 100,
+                timestamp: now_ts(),
+            });
+        } else if command == "supervisor" {
+            self.selected_nav = 7;
+            let mut lines = vec!["SUBJECT            ACTION     RESTARTS REASON".to_string()];
+            for event in &self.state.supervisor_events {
+                lines.push(format!(
+                    "{:<18} {:<10} {:<8} {}",
+                    event.subject, event.action, event.restarts, event.reason
+                ));
+            }
+            if self.state.supervisor_events.is_empty() {
+                lines.push("No supervisor incidents recorded.".into());
+            }
+            let _ = self.event_tx.send(OpsEvent::ResearchCompleted {
+                topic: "supervisor-events".into(),
+                conclusion: lines.join("\n"),
+                confidence: 100,
+                timestamp: now_ts(),
+            });
+        } else if command == "boot status" {
+            self.selected_nav = 7;
+            let boot = &self.state.boot_config;
+            let conclusion = format!(
+                "profile: {}\nservices: {}\nmounts: {}\ndefault_policy: {}\ninitialized_at: {}",
+                boot.profile,
+                boot.services.join(", "),
+                boot.mounted_workspaces.join(", "),
+                boot.default_policy,
+                boot.initialized_at
+            );
+            let _ = self.event_tx.send(OpsEvent::ResearchCompleted {
+                topic: "boot-status".into(),
+                conclusion,
+                confidence: 100,
+                timestamp: now_ts(),
+            });
+        } else if let Some(raw) = command.strip_prefix("ipc send ") {
+            let mut parts = raw.splitn(3, ' ');
+            let to = parts.next().unwrap_or("broadcast");
+            let topic = parts.next().unwrap_or("message");
+            let payload = parts.next().unwrap_or("");
+            let _ = self.event_tx.send(OpsEvent::IpcMessageRecorded {
+                message: IpcMessage {
+                    id: next_id("ipc"),
+                    from: "agentic-shell".into(),
+                    to: to.into(),
+                    topic: topic.into(),
+                    payload: payload.into(),
+                    delivered: true,
+                    timestamp: now_ts(),
+                },
+            });
+        } else if let Some(agent) = command.strip_prefix("kill ") {
+            self.selected_nav = 1;
+            let _ = self.event_tx.send(OpsEvent::AgentLifecycleChanged {
+                agent: agent.trim().into(),
+                status: AgentStatus::Failed,
+                task: "killed by agentic shell".into(),
+                timestamp: now_ts(),
+            });
+        } else if let Some(agent) = command.strip_prefix("pause ") {
+            self.selected_nav = 1;
+            let _ = self.event_tx.send(OpsEvent::AgentLifecycleChanged {
+                agent: agent.trim().into(),
+                status: AgentStatus::Waiting,
+                task: "paused by agentic shell".into(),
+                timestamp: now_ts(),
+            });
+        } else if let Some(agent) = command.strip_prefix("resume ") {
+            self.selected_nav = 1;
+            let _ = self.event_tx.send(OpsEvent::AgentLifecycleChanged {
+                agent: agent.trim().into(),
+                status: AgentStatus::Running,
+                task: "resumed by agentic shell".into(),
+                timestamp: now_ts(),
+            });
         } else if command.starts_with("spawn-agent") {
             self.selected_nav = 1;
             let role = command
@@ -1811,12 +2193,38 @@ fn octopus_health(value: &u8) -> &'static str {
     }
 }
 
+fn panel(title: &str) -> Block<'static> {
+    Block::bordered()
+        .border_style(Style::default().fg(PANEL_BORDER))
+        .title(Span::styled(
+            format!(" {title} "),
+            Style::default()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::BOLD),
+        ))
+}
+
+fn plain_panel() -> Block<'static> {
+    Block::bordered().border_style(Style::default().fg(PANEL_BORDER))
+}
+
+fn top_bar_block() -> Block<'static> {
+    Block::new()
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(PANEL_BORDER))
+}
+
+fn header_style() -> Style {
+    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+}
+
 fn event_timestamp(event: &OpsEvent) -> &str {
     match event {
         OpsEvent::IncidentDetected { timestamp, .. } => timestamp.as_str(),
         OpsEvent::CommandRequested { timestamp, .. } => timestamp.as_str(),
         OpsEvent::CommandExecuted { timestamp, .. } => timestamp.as_str(),
         OpsEvent::AgentSpawned { timestamp, .. } => timestamp.as_str(),
+        OpsEvent::ConversationMessageRecorded { message } => &message.timestamp,
         OpsEvent::ResearchCompleted { timestamp, .. } => timestamp.as_str(),
         OpsEvent::ExplainabilityRecorded { record } => &record.timestamp,
         OpsEvent::RecoveryProposed { action } => &action.timestamp,
@@ -1832,6 +2240,7 @@ fn event_type_tag(event: &OpsEvent) -> &'static str {
         OpsEvent::CommandExecuted { success: true, .. } => "CmdOK",
         OpsEvent::CommandExecuted { success: false, .. } => "CmdFail",
         OpsEvent::AgentSpawned { .. } => "AgentSpawn",
+        OpsEvent::ConversationMessageRecorded { .. } => "Chat",
         OpsEvent::ResearchCompleted { .. } => "Research",
         OpsEvent::RecoveryProposed { .. } => "RecoveryProp",
         OpsEvent::RecoveryApproved { .. } => "RecoveryAppr",
@@ -2092,6 +2501,131 @@ fn runtime_status_for(endpoint: &str) -> RuntimeStatus {
     } else {
         RuntimeStatus::Local
     }
+}
+
+fn chat_agent_role(prompt: &str) -> AgentRole {
+    let lower = prompt.to_ascii_lowercase();
+    if lower.contains("plan") || lower.contains("roadmap") || lower.contains("break down") {
+        AgentRole::Planner
+    } else if lower.contains("code")
+        || lower.contains("write")
+        || lower.contains("build")
+        || lower.contains("implement")
+    {
+        AgentRole::Executor
+    } else if lower.contains("security")
+        || lower.contains("vulnerability")
+        || lower.contains("blocked")
+        || lower.contains("threat")
+    {
+        AgentRole::Triage
+    } else {
+        AgentRole::Research
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ChatFileRequest {
+    pub(crate) path: PathBuf,
+    pub(crate) content: String,
+}
+
+pub(crate) fn parse_chat_file_request(prompt: &str) -> Option<ChatFileRequest> {
+    let lower = prompt.to_ascii_lowercase();
+    if !(lower.contains("create") || lower.contains("write") || lower.contains("make"))
+        || !lower.contains("file")
+    {
+        return None;
+    }
+
+    let path = extract_chat_file_path(prompt)?;
+    let content = extract_chat_file_content(prompt).unwrap_or_else(|| {
+        format!(
+            "# {}\n\nCreated from an OctoBot chat request.\n",
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("New File")
+        )
+    });
+
+    Some(ChatFileRequest { path, content })
+}
+
+fn extract_chat_file_path(prompt: &str) -> Option<PathBuf> {
+    let words = prompt.split_whitespace().collect::<Vec<_>>();
+    let mut next_is_path = false;
+    for word in words {
+        let cleaned = word.trim_matches(|c: char| {
+            matches!(
+                c,
+                '"' | '\'' | '`' | ',' | ':' | ';' | '(' | ')' | '[' | ']'
+            )
+        });
+        let lower = cleaned.to_ascii_lowercase();
+        let is_path_marker = matches!(lower.as_str(), "named" | "called" | "file" | "path");
+        if next_is_path && !cleaned.is_empty() && !is_path_marker {
+            return Some(PathBuf::from(cleaned));
+        }
+        if matches!(lower.as_str(), "named" | "called" | "file" | "path") {
+            next_is_path = true;
+        }
+    }
+    None
+}
+
+fn extract_chat_file_content(prompt: &str) -> Option<String> {
+    for marker in [
+        " with content ",
+        " content: ",
+        " containing ",
+        " that says ",
+        " with text ",
+    ] {
+        if let Some((_, content)) = prompt.split_once(marker) {
+            return Some(clean_chat_file_content(content));
+        }
+    }
+    None
+}
+
+fn clean_chat_file_content(content: &str) -> String {
+    let trimmed = content
+        .trim()
+        .trim_matches(|c| matches!(c, '"' | '\'' | '`'));
+    if trimmed.ends_with('\n') {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}\n")
+    }
+}
+
+fn write_chat_file(request: &ChatFileRequest) -> Result<PathBuf, String> {
+    let path = safe_chat_file_path(&request.path)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create parent directory: {error}"))?;
+    }
+    std::fs::write(&path, &request.content)
+        .map_err(|error| format!("failed to write `{}`: {error}", path.display()))?;
+    Ok(path)
+}
+
+pub(crate) fn safe_chat_file_path(path: &Path) -> Result<PathBuf, String> {
+    if path.is_absolute() {
+        return Err("use a relative path inside this project workspace".into());
+    }
+    if path.as_os_str().is_empty() {
+        return Err("missing file path".into());
+    }
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err("path traversal is not allowed".into());
+    }
+    Ok(path.to_path_buf())
 }
 
 fn format_duration(secs: u64) -> String {

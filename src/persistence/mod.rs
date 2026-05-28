@@ -10,6 +10,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     models::{OpsEvent, OpsState},
+    security::PersistenceProtector,
     utils::next_id,
 };
 
@@ -152,7 +153,8 @@ impl PostgresStore {
 
     async fn persist_event(&self, event: &OpsEvent, state: &OpsState) -> Result<()> {
         let event_json = serde_json::to_value(event).context("serializing OpsEvent")?;
-        let state_json = serde_json::to_value(state).context("serializing OpsState")?;
+        let mut state_json = serde_json::to_value(state).context("serializing OpsState")?;
+        PersistenceProtector::protect_json(&mut state_json);
         let event_type = event_type(event);
 
         let mut tx = self.pool.begin().await.context("starting persistence tx")?;
@@ -542,17 +544,20 @@ fn memory_document(event: &OpsEvent) -> Option<MemoryDocument> {
             stderr,
             timestamp,
             ..
-        } => Some(MemoryDocument {
-            id: next_id("memory"),
-            source: "execution".into(),
-            text: format!(
+        } => {
+            let text = format!(
                 "{} {} {}",
                 command,
                 if *success { "succeeded" } else { "failed" },
                 if stdout.is_empty() { stderr } else { stdout }
-            ),
-            metadata: json!({ "execution_id": id, "command": command, "success": success, "timestamp": timestamp }),
-        }),
+            );
+            Some(MemoryDocument {
+                id: next_id("memory"),
+                source: "execution".into(),
+                text: crate::security::redact_sensitive(&text),
+                metadata: json!({ "execution_id": id, "command": command, "success": success, "timestamp": timestamp }),
+            })
+        }
         OpsEvent::InfrastructureSnapshotRecorded {
             source,
             nodes,
@@ -589,7 +594,9 @@ fn memory_document(event: &OpsEvent) -> Option<MemoryDocument> {
         } => Some(MemoryDocument {
             id: next_id("memory"),
             source: "tool-call".into(),
-            text: format!("tool {tool} completed success={success}: {output}"),
+            text: crate::security::redact_sensitive(&format!(
+                "tool {tool} completed success={success}: {output}"
+            )),
             metadata: json!({ "tool_call_id": id, "tool": tool, "success": success, "timestamp": timestamp }),
         }),
         _ => None,
@@ -668,6 +675,20 @@ pub(crate) fn event_type(event: &OpsEvent) -> &'static str {
         OpsEvent::MetricsSampled { .. } => "MetricsSampled",
         OpsEvent::InfrastructureSnapshotRecorded { .. } => "InfrastructureSnapshotRecorded",
         OpsEvent::WorkflowDefinitionLoaded { .. } => "WorkflowDefinitionLoaded",
+        OpsEvent::AgentProcessUpdated { .. } => "AgentProcessUpdated",
+        OpsEvent::SyscallRecorded { .. } => "SyscallRecorded",
+        OpsEvent::ConversationMessageRecorded { .. } => "ConversationMessageRecorded",
+        OpsEvent::KernelTaskScheduled { .. } => "KernelTaskScheduled",
+        OpsEvent::WorkspaceArtifactRecorded { .. } => "WorkspaceArtifactRecorded",
+        OpsEvent::SystemServiceUpdated { .. } => "SystemServiceUpdated",
+        OpsEvent::AgenticAppInstalled { .. } => "AgenticAppInstalled",
+        OpsEvent::ResourceQuotaUpdated { .. } => "ResourceQuotaUpdated",
+        OpsEvent::IpcMessageRecorded { .. } => "IpcMessageRecorded",
+        OpsEvent::PolicyGrantUpdated { .. } => "PolicyGrantUpdated",
+        OpsEvent::AgentMemoryEntryRecorded { .. } => "AgentMemoryEntryRecorded",
+        OpsEvent::AppPackageImported { .. } => "AppPackageImported",
+        OpsEvent::SupervisorEventRecorded { .. } => "SupervisorEventRecorded",
+        OpsEvent::BootCompleted { .. } => "BootCompleted",
         OpsEvent::WorkflowNodeCompleted { .. } => "WorkflowNodeCompleted",
         OpsEvent::AiProviderLogin { .. } => "AiProviderLogin",
         OpsEvent::AgentMemoryStored { .. } => "AgentMemoryStored",

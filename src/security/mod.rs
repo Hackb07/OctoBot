@@ -1,11 +1,14 @@
 use std::{
     collections::{HashMap, VecDeque},
+    fs,
     hash::{Hash, Hasher},
+    path::Path,
     time::{Duration, Instant},
 };
 
 use crate::models::{
-    AgentRole, ExplainabilityRecord, OpsEvent, OpsState, PluginDescriptor, PluginKind, UserRole,
+    AgentRole, AgentRuntimeKind, ExplainabilityRecord, OpsEvent, OpsState, PluginDescriptor,
+    PluginKind, RuntimeStatus, TimelineCategory, UserRole,
 };
 use crate::utils::now_ts;
 
@@ -233,6 +236,45 @@ impl SecurityPolicy {
         }
         Ok(())
     }
+
+    pub(crate) fn validate_event(event: &OpsEvent, state: &OpsState) -> Result<(), String> {
+        EventBusSecurity::validate_event(event, state)
+    }
+
+    pub(crate) fn validate_syscall(role: &AgentRole, call: &str) -> Result<&'static str, String> {
+        let capability = match call {
+            "fs.read" => "fs:read",
+            "fs.write" if matches!(role, AgentRole::Executor | AgentRole::Report) => "fs:write",
+            "shell.exec"
+                if matches!(
+                    role,
+                    AgentRole::Executor
+                        | AgentRole::Logs
+                        | AgentRole::Research
+                        | AgentRole::Triage
+                        | AgentRole::Planner
+                ) =>
+            {
+                "cmd:readonly"
+            }
+            "memory.search" => "memory:read",
+            "memory.write" => "memory:write",
+            "workflow.start" if matches!(role, AgentRole::Planner | AgentRole::Workflow) => {
+                "workflow:execute"
+            }
+            "plugin.call" => "plugin:call",
+            "network.request" => {
+                return Err("syscall denied: external network requires explicit app grant".into());
+            }
+            "event.emit" => "event:emit",
+            _ => {
+                return Err(format!(
+                    "syscall `{call}` is not permitted for role {role:?}"
+                ));
+            }
+        };
+        Ok(capability)
+    }
 }
 
 pub(crate) struct PluginSecurity;
@@ -298,6 +340,40 @@ impl PluginSecurity {
         } else {
             Err("plugin manifest rejected: integrity signature mismatch".into())
         }
+    }
+
+    pub(crate) fn enforce_runtime_boundaries(
+        descriptor: &PluginDescriptor,
+        input: &str,
+    ) -> Result<(), String> {
+        Self::validate_descriptor(descriptor)?;
+        if input.len() > 2_048 {
+            return Err("plugin input rejected: quota exceeded".into());
+        }
+        if SecurityPolicy::detect_prompt_attack(input).is_some() {
+            return Err("plugin input rejected: prompt manipulation".into());
+        }
+        let scopes = Self::permissions_for_kind(&descriptor.kind);
+        let lower = input.to_ascii_lowercase();
+        if scopes.contains(&"net:deny")
+            && ["http://", "https://", "curl ", "wget ", "nc "]
+                .iter()
+                .any(|needle| lower.contains(needle))
+        {
+            return Err(
+                "plugin input rejected: network access denied by scoped permissions".into(),
+            );
+        }
+        if scopes.contains(&"fs:deny")
+            && ["../", "/etc/", "/var/", "read_to_string", "write "]
+                .iter()
+                .any(|needle| lower.contains(needle))
+        {
+            return Err(
+                "plugin input rejected: filesystem access denied by scoped permissions".into(),
+            );
+        }
+        Ok(())
     }
 }
 
@@ -450,6 +526,505 @@ impl SecurityAuditor {
             tools_used: vec!["security-auditor".into(), "deepseek-r1:8b-prompt".into()],
             timestamp: now_ts(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SecurityToolReport {
+    pub(crate) dependency_findings: Vec<SecurityFinding>,
+    pub(crate) port_findings: Vec<SecurityFinding>,
+    pub(crate) configuration_findings: Vec<SecurityFinding>,
+    pub(crate) log_findings: Vec<SecurityFinding>,
+    pub(crate) plugin_findings: Vec<SecurityFinding>,
+    pub(crate) workflow_findings: Vec<SecurityFinding>,
+    pub(crate) sandbox_findings: Vec<SecurityFinding>,
+}
+
+impl SecurityToolReport {
+    pub(crate) fn all_findings(&self) -> Vec<SecurityFinding> {
+        [
+            self.dependency_findings.as_slice(),
+            self.port_findings.as_slice(),
+            self.configuration_findings.as_slice(),
+            self.log_findings.as_slice(),
+            self.plugin_findings.as_slice(),
+            self.workflow_findings.as_slice(),
+            self.sandbox_findings.as_slice(),
+        ]
+        .concat()
+    }
+}
+
+pub(crate) struct SecurityTooling;
+
+impl SecurityTooling {
+    pub(crate) fn offline_audit(state: &OpsState) -> SecurityToolReport {
+        SecurityToolReport {
+            dependency_findings: Self::scan_dependency_metadata(
+                "Cargo.lock",
+                include_str!("../../Cargo.lock"),
+            ),
+            port_findings: Self::scan_proc_net_tcp("/proc/net/tcp")
+                .into_iter()
+                .chain(Self::scan_proc_net_tcp("/proc/net/tcp6"))
+                .collect(),
+            configuration_findings: Self::analyze_configuration(state),
+            log_findings: Self::detect_log_anomalies(&state.logs),
+            plugin_findings: Self::analyze_plugins(&state.plugins),
+            workflow_findings: Self::validate_workflow_summaries(state),
+            sandbox_findings: Self::inspect_sandbox(state),
+        }
+    }
+
+    pub(crate) fn scan_dependency_metadata(name: &str, contents: &str) -> Vec<SecurityFinding> {
+        let mut findings = Vec::new();
+        let mut current_package = String::new();
+        for line in contents.lines() {
+            let trimmed = line.trim();
+            if let Some(value) = trimmed.strip_prefix("name = ") {
+                current_package = value.trim_matches('"').to_string();
+            } else if let Some(value) = trimmed.strip_prefix("version = ") {
+                let current_version = value.trim_matches('"').to_string();
+                if is_risky_dependency(&current_package, &current_version) {
+                    findings.push(SecurityFinding {
+                        id: format!("dep-{current_package}-{current_version}"),
+                        severity: "medium".into(),
+                        title: "Dependency requires offline vulnerability review".into(),
+                        evidence: format!("{current_package} {current_version} in {name}"),
+                        recommendation:
+                            "review local advisory data, changelog, and patched package versions"
+                                .into(),
+                    });
+                }
+            }
+        }
+        if contents.contains("default-features = true") && name.ends_with("Cargo.toml") {
+            findings.push(SecurityFinding {
+                id: "dep-default-features".into(),
+                severity: "low".into(),
+                title: "Dependency enables default features".into(),
+                evidence: "default features may expand attack surface".into(),
+                recommendation: "disable unused dependency features where possible".into(),
+            });
+        }
+        findings
+    }
+
+    pub(crate) fn scan_proc_net_tcp(path: impl AsRef<Path>) -> Vec<SecurityFinding> {
+        let Ok(contents) = fs::read_to_string(path.as_ref()) else {
+            return Vec::new();
+        };
+        Self::scan_proc_net_tcp_contents(&path.as_ref().display().to_string(), &contents)
+    }
+
+    pub(crate) fn scan_proc_net_tcp_contents(name: &str, contents: &str) -> Vec<SecurityFinding> {
+        contents
+            .lines()
+            .skip(1)
+            .filter_map(|line| {
+                let parts = line.split_whitespace().collect::<Vec<_>>();
+                let local = parts.get(1)?;
+                let state = parts.get(3)?;
+                if *state != "0A" {
+                    return None;
+                }
+                let (_, port_hex) = local.rsplit_once(':')?;
+                let port = u16::from_str_radix(port_hex, 16).ok()?;
+                risky_listening_port(port).map(|(severity, reason)| SecurityFinding {
+                    id: format!("port-{port}"),
+                    severity: severity.into(),
+                    title: "Risky local listening port".into(),
+                    evidence: format!("{name} reports TCP/{port} listening ({reason})"),
+                    recommendation: "bind admin services to localhost and require authentication"
+                        .into(),
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn analyze_configuration(state: &OpsState) -> Vec<SecurityFinding> {
+        let mut findings = Vec::new();
+        for (key, value) in [
+            (
+                "OCTOBOT_DATABASE_URL",
+                std::env::var("OCTOBOT_DATABASE_URL").ok(),
+            ),
+            (
+                "OCTOBOT_QDRANT_URL",
+                std::env::var("OCTOBOT_QDRANT_URL").ok(),
+            ),
+            (
+                "OCTOBOT_EMBEDDING_URL",
+                std::env::var("OCTOBOT_EMBEDDING_URL").ok(),
+            ),
+            (
+                "OCTOBOT_KUBERNETES_URL",
+                std::env::var("OCTOBOT_KUBERNETES_URL").ok(),
+            ),
+        ] {
+            if let Some(value) = value {
+                if is_remote_url(&value) {
+                    findings.push(SecurityFinding {
+                        id: format!("config-{key}"),
+                        severity: "medium".into(),
+                        title: "External service endpoint configured".into(),
+                        evidence: format!("{key}={}", redact_sensitive(&value)),
+                        recommendation: "use localhost endpoints for offline deployments".into(),
+                    });
+                }
+            }
+        }
+        if state.current_role == UserRole::Admin {
+            findings.push(SecurityFinding {
+                id: "config-active-admin-role".into(),
+                severity: "low".into(),
+                title: "Admin role is currently active".into(),
+                evidence: "current runtime role is Admin".into(),
+                recommendation: "drop to operator or read-only outside approval windows".into(),
+            });
+        }
+        findings
+    }
+
+    pub(crate) fn detect_log_anomalies(logs: &[String]) -> Vec<SecurityFinding> {
+        let mut findings = Vec::new();
+        let failed = logs
+            .iter()
+            .filter(|line| {
+                let lower = line.to_ascii_lowercase();
+                lower.contains("failed")
+                    || lower.contains("denied")
+                    || lower.contains("unauthorized")
+                    || lower.contains("blocked")
+            })
+            .count();
+        if failed >= 3 {
+            findings.push(SecurityFinding {
+                id: "log-repeated-failures".into(),
+                severity: "medium".into(),
+                title: "Repeated suspicious log events".into(),
+                evidence: format!("{failed} log lines contain failure, denial, or block markers"),
+                recommendation: "review recent command, auth, and plugin activity".into(),
+            });
+        }
+        for (idx, line) in logs.iter().enumerate() {
+            if SecurityPolicy::detect_prompt_attack(line).is_some() {
+                findings.push(SecurityFinding {
+                    id: format!("log-prompt-attack-{}", idx + 1),
+                    severity: "high".into(),
+                    title: "Prompt manipulation in logs".into(),
+                    evidence: line.clone(),
+                    recommendation: "quarantine the source and preserve audit records".into(),
+                });
+            }
+        }
+        findings
+    }
+
+    pub(crate) fn analyze_plugins(plugins: &[PluginDescriptor]) -> Vec<SecurityFinding> {
+        let mut findings = Vec::new();
+        for plugin in plugins {
+            if let Err(error) = PluginSecurity::validate_descriptor(plugin) {
+                findings.push(SecurityFinding {
+                    id: format!("plugin-{}", plugin.name),
+                    severity: "medium".into(),
+                    title: "Plugin manifest failed security validation".into(),
+                    evidence: error,
+                    recommendation: "fix manifest identity, owner, version, and installer text"
+                        .into(),
+                });
+            }
+            if matches!(plugin.kind, PluginKind::Integration)
+                && plugin.description.to_ascii_lowercase().contains("token")
+            {
+                findings.push(SecurityFinding {
+                    id: format!("plugin-secret-{}", plugin.name),
+                    severity: "medium".into(),
+                    title: "Plugin description may expose credential handling".into(),
+                    evidence: plugin.description.clone(),
+                    recommendation: "move credentials to scoped secret storage".into(),
+                });
+            }
+        }
+        findings
+    }
+
+    pub(crate) fn validate_workflow_yaml(name: &str, yaml: &str) -> Vec<SecurityFinding> {
+        let mut findings = Vec::new();
+        let value = match serde_yaml::from_str::<serde_yaml::Value>(yaml) {
+            Ok(value) => value,
+            Err(error) => {
+                return vec![SecurityFinding {
+                    id: format!("workflow-{name}-parse"),
+                    severity: "high".into(),
+                    title: "Workflow YAML is invalid".into(),
+                    evidence: error.to_string(),
+                    recommendation: "fix YAML syntax before loading the workflow".into(),
+                }];
+            }
+        };
+        let Some(nodes) = value.get("nodes").and_then(|nodes| nodes.as_sequence()) else {
+            findings.push(SecurityFinding {
+                id: format!("workflow-{name}-nodes"),
+                severity: "high".into(),
+                title: "Workflow has no node list".into(),
+                evidence: "nodes field is missing or not a sequence".into(),
+                recommendation: "define an explicit DAG node list".into(),
+            });
+            return findings;
+        };
+        let mut ids = Vec::new();
+        for node in nodes {
+            if let Some(id) = node.get("id").and_then(|id| id.as_str()) {
+                ids.push(id.to_string());
+            }
+            if let Some(command) = node.get("command").and_then(|cmd| cmd.as_str()) {
+                if let Err(error) = SecurityPolicy::validate_command(command) {
+                    findings.push(SecurityFinding {
+                        id: format!("workflow-{name}-command"),
+                        severity: "high".into(),
+                        title: "Workflow command violates sandbox policy".into(),
+                        evidence: error,
+                        recommendation:
+                            "replace with an allowlisted read-only command or approval gate".into(),
+                    });
+                }
+            }
+            let kind = node
+                .get("kind")
+                .and_then(|kind| kind.as_str())
+                .unwrap_or("");
+            if kind == "command"
+                && !node
+                    .get("approval_required")
+                    .and_then(|approval| approval.as_bool())
+                    .unwrap_or(false)
+                && node.get("rollback").is_none()
+            {
+                findings.push(SecurityFinding {
+                    id: format!("workflow-{name}-rollback"),
+                    severity: "low".into(),
+                    title: "Command workflow node has no rollback gap coverage".into(),
+                    evidence: "command node lacks rollback and explicit approval".into(),
+                    recommendation: "add approval_required or rollback for risky command nodes"
+                        .into(),
+                });
+            }
+        }
+        ids.sort();
+        if ids.windows(2).any(|pair| pair[0] == pair[1]) {
+            findings.push(SecurityFinding {
+                id: format!("workflow-{name}-duplicate-node"),
+                severity: "high".into(),
+                title: "Workflow contains duplicate node IDs".into(),
+                evidence: "duplicate DAG node identity detected".into(),
+                recommendation: "make every node id unique".into(),
+            });
+        }
+        findings
+    }
+
+    fn validate_workflow_summaries(state: &OpsState) -> Vec<SecurityFinding> {
+        state
+            .workflows
+            .iter()
+            .filter(|workflow| workflow.progress < 100 && workflow.stage.contains("Approval"))
+            .map(|workflow| SecurityFinding {
+                id: format!("workflow-runtime-{}", workflow.id),
+                severity: "low".into(),
+                title: "Workflow waiting on approval".into(),
+                evidence: format!("{} is at {}", workflow.name, workflow.stage),
+                recommendation: "ensure approval is tied to an authorized operator role".into(),
+            })
+            .collect()
+    }
+
+    pub(crate) fn inspect_sandbox(state: &OpsState) -> Vec<SecurityFinding> {
+        let mut findings = Vec::new();
+        if !state.sandbox_policy.persisted {
+            findings.push(SecurityFinding {
+                id: "sandbox-policy-not-persisted".into(),
+                severity: "low".into(),
+                title: "Sandbox policy is not persisted".into(),
+                evidence: format!("mode={}", state.sandbox_policy.mode),
+                recommendation: "persist sandbox approvals and review requirements".into(),
+            });
+        }
+        for runtime in &state.runtimes {
+            if matches!(
+                runtime.kind,
+                AgentRuntimeKind::RemoteServer | AgentRuntimeKind::Cluster
+            ) && matches!(runtime.status, RuntimeStatus::Active)
+            {
+                findings.push(SecurityFinding {
+                    id: format!("sandbox-runtime-{}", runtime.agent),
+                    severity: "medium".into(),
+                    title: "Active non-local runtime boundary".into(),
+                    evidence: format!("{} uses {}", runtime.agent, runtime.endpoint),
+                    recommendation: "verify network, filesystem, and quota boundaries".into(),
+                });
+            }
+        }
+        findings
+    }
+}
+
+pub(crate) struct EventBusSecurity;
+
+impl EventBusSecurity {
+    pub(crate) fn validate_event(event: &OpsEvent, state: &OpsState) -> Result<(), String> {
+        if state.events.len() >= crate::constants::event_limit().saturating_mul(2) {
+            return Err("event bus rejected event: backlog exceeds hard limit".into());
+        }
+        match event {
+            OpsEvent::CommandRequested { command, .. } => {
+                SecurityPolicy::validate_command(command).map(|_| ())
+            }
+            OpsEvent::ToolCallRequested {
+                tool, arguments, ..
+            } => {
+                if arguments.to_string().len() > 8_192 {
+                    return Err("event bus rejected tool call: arguments too large".into());
+                }
+                if tool.trim().is_empty() {
+                    return Err("event bus rejected tool call: empty tool name".into());
+                }
+                Ok(())
+            }
+            OpsEvent::AiProviderLogin { kind, endpoint, .. } => {
+                if kind != "ollama" {
+                    return Err(
+                        "event bus rejected AI provider: only local Ollama is allowed".into(),
+                    );
+                }
+                if local_loopback_http(endpoint) {
+                    Ok(())
+                } else {
+                    Err("event bus rejected AI provider: endpoint must be localhost".into())
+                }
+            }
+            OpsEvent::PluginRegistered { plugin } => PluginSecurity::validate_descriptor(plugin),
+            OpsEvent::TimelineRecorded { event } => {
+                if matches!(event.category, TimelineCategory::Recovery)
+                    && event.summary.to_ascii_lowercase().contains("approved")
+                    && state.current_role == UserRole::ReadOnly
+                {
+                    Err("event bus rejected recovery transition for read-only role".into())
+                } else {
+                    Ok(())
+                }
+            }
+            OpsEvent::RecoveryApproved { role, .. } => {
+                if role.can_approve_recovery() {
+                    Ok(())
+                } else {
+                    Err("event bus rejected recovery approval from unauthorized role".into())
+                }
+            }
+            _ => Ok(()),
+        }
+    }
+
+    pub(crate) fn integrity_hash(event: &OpsEvent, previous_hash: u64) -> u64 {
+        stable_hash(&(previous_hash, format!("{event:?}")))
+    }
+}
+
+pub(crate) struct PersistenceProtector;
+
+impl PersistenceProtector {
+    pub(crate) fn protect_json(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, value) in map.iter_mut() {
+                    let lower = key.to_ascii_lowercase();
+                    if lower.contains("password")
+                        || lower.contains("token")
+                        || lower.contains("api_key")
+                        || lower.contains("authorization")
+                        || lower.contains("secret")
+                    {
+                        let fingerprint = stable_hash(&value.to_string());
+                        *value = serde_json::Value::String(format!("protected:{fingerprint:x}"));
+                    } else {
+                        Self::protect_json(value);
+                    }
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    Self::protect_json(value);
+                }
+            }
+            serde_json::Value::String(text) => {
+                *text = redact_sensitive(text);
+            }
+            _ => {}
+        }
+    }
+}
+
+pub(crate) struct WorkflowSecurity;
+
+impl WorkflowSecurity {
+    pub(crate) fn risk_score(command: Option<&str>, approval_required: bool, rollback: bool) -> u8 {
+        let mut score = 10;
+        if let Some(command) = command {
+            match SecurityPolicy::validate_command(command) {
+                Ok(decision) if decision.tier == CommandTier::Remediation => score += 45,
+                Ok(_) => score += 10,
+                Err(_) => score += 80,
+            }
+        }
+        if !approval_required {
+            score += 15;
+        }
+        if !rollback {
+            score += 15;
+        }
+        score.min(100)
+    }
+}
+
+pub(crate) struct AsyncRuntimeGuard;
+
+impl AsyncRuntimeGuard {
+    pub(crate) fn backpressure_findings(state: &OpsState) -> Vec<SecurityFinding> {
+        let mut findings = Vec::new();
+        let event_limit = crate::constants::event_limit();
+        if state.events.len() >= event_limit.saturating_mul(8) / 10 {
+            findings.push(SecurityFinding {
+                id: "runtime-event-backpressure".into(),
+                severity: "medium".into(),
+                title: "Event bus approaching capacity".into(),
+                evidence: format!(
+                    "{} events buffered; limit is {event_limit}",
+                    state.events.len()
+                ),
+                recommendation: "increase event processing throughput or lower producer rate"
+                    .into(),
+            });
+        }
+        let active = state
+            .agents
+            .iter()
+            .filter(|agent| {
+                !matches!(
+                    agent.status,
+                    crate::models::AgentStatus::Completed | crate::models::AgentStatus::Failed
+                )
+            })
+            .count();
+        if active > 24 {
+            findings.push(SecurityFinding {
+                id: "runtime-agent-supervision".into(),
+                severity: "medium".into(),
+                title: "Too many active async agents".into(),
+                evidence: format!("{active} agents are active"),
+                recommendation: "throttle new work and wait for supervised tasks to finish".into(),
+            });
+        }
+        findings
     }
 }
 
@@ -619,4 +1194,40 @@ fn env_usize(key: &str, default: usize) -> usize {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
+}
+
+fn is_risky_dependency(name: &str, version: &str) -> bool {
+    let old_major_zero = version
+        .split('.')
+        .next()
+        .and_then(|major| major.parse::<u16>().ok())
+        .map(|major| major == 0)
+        .unwrap_or(false);
+    matches!(
+        name,
+        "openssl" | "native-tls" | "ring" | "hyper" | "h2" | "tokio" | "reqwest"
+    ) && old_major_zero
+}
+
+fn risky_listening_port(port: u16) -> Option<(&'static str, &'static str)> {
+    match port {
+        22 | 2375 | 2376 | 5432 | 6379 | 9200 | 9300 => Some(("high", "admin or data service")),
+        6333 | 7878 | 8080 | 9090 | 11434 => Some(("medium", "operations service")),
+        _ => None,
+    }
+}
+
+fn is_remote_url(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    (lower.starts_with("http://") || lower.starts_with("https://"))
+        && !lower.contains("://localhost")
+        && !lower.contains("://127.0.0.1")
+        && !lower.contains("://[::1]")
+}
+
+fn local_loopback_http(value: &str) -> bool {
+    let lower = value.trim().trim_end_matches('/').to_ascii_lowercase();
+    lower.starts_with("http://localhost:")
+        || lower.starts_with("http://127.0.0.1:")
+        || lower.starts_with("http://[::1]:")
 }

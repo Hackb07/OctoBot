@@ -36,7 +36,7 @@ cargo run
 Expected tests:
 
 ```text
-27 passed
+37 passed
 ```
 
 Press `/` for commands, `1`-`9` for views, `Tab` to cycle views, `?` for help, and `q` to quit.

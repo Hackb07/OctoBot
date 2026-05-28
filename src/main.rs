@@ -66,8 +66,9 @@ async fn main() -> Result<()> {
     tokio::spawn(run_live_log_stream(event_tx.clone()));
     tokio::spawn({
         let rx = rx.clone();
+        let event_tx = event_tx.clone();
         async move {
-            if let Err(error) = api::serve_api(rx).await {
+            if let Err(error) = api::serve_api(rx, event_tx).await {
                 debug!(%error, "control API exited");
             }
         }
