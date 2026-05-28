@@ -24,6 +24,30 @@ sudo apt update
 sudo apt install -y build-essential pkg-config libssl-dev
 ```
 
+## One-Command Linux Install
+
+On a fresh Linux machine, install dependencies, clone OctoBot from GitHub, set up Rust/Python/frontend tooling, pull default Ollama models, and launch the app with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Hackb07/OctoBot/main/scripts/install-linux.sh | bash
+```
+
+Or clone first and run the installer from the repository:
+
+```bash
+git clone https://github.com/Hackb07/OctoBot "$HOME/openAi/OctoBot"
+cd "$HOME/openAi/OctoBot"
+scripts/install-linux.sh
+```
+
+Useful installer options:
+
+```bash
+scripts/install-linux.sh --no-run
+scripts/install-linux.sh --skip-ollama
+scripts/install-linux.sh --dir "$HOME/apps/OctoBot"
+```
+
 ## Install and Run
 
 ```bash

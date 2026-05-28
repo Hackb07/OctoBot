@@ -13,6 +13,30 @@ Use it to investigate incidents, run allowlisted infrastructure commands, coordi
 | [Deployment](docs/deployment.md) | Production setup |
 | [Phase Notes](docs/phase-25-29-completion.md) | Latest phase completion |
 
+## Install
+
+Fresh Linux install from GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Hackb07/OctoBot/main/scripts/install-linux.sh | bash
+```
+
+Git clone method:
+
+```bash
+git clone https://github.com/Hackb07/OctoBot "$HOME/openAi/OctoBot"
+cd "$HOME/openAi/OctoBot"
+scripts/install-linux.sh
+```
+
+After installation, run the app with:
+
+```bash
+cargo run
+```
+
+`cargo run` starts or reuses Ollama, the Python backend, the frontend dev server, the Rust control API, and the Rust runtime service before opening the terminal UI.
+
 ## Status Legend
 
 | Mark | Meaning |
