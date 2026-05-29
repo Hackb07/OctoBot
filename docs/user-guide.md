@@ -52,7 +52,7 @@ cargo test
 Expected Rust test result:
 
 ```text
-42 passed
+51 passed
 ```
 
 Production verification also includes Python, frontend, and desktop checks:
@@ -61,8 +61,8 @@ Production verification also includes Python, frontend, and desktop checks:
 cargo clippy --all-targets -- -D warnings
 PYTHONPATH=. .venv/bin/pytest
 PYTHONPATH=. .venv/bin/ruff check backend tests
-cd frontend && npm ci && npm run build && npm audit
-cd frontend/src-tauri && cargo check
+cd octobot-web && npm ci && npm run build && npm audit
+cd octobot-web/src-tauri && cargo check
 ```
 
 ### 4. Run
@@ -193,7 +193,7 @@ curl -s http://127.0.0.1:8787/metrics
 Frontend:
 
 ```bash
-cd frontend
+cd octobot-web
 npm ci
 npm run dev
 ```

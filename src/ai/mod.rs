@@ -834,8 +834,7 @@ impl AiClient {
             .iter()
             .map(|model| model.model.as_str())
             .collect::<Vec<_>>();
-        if let Some(resolved) = resolve_installed_model_name(requested, installed_names.into_iter())
-        {
+        if let Some(resolved) = resolve_installed_model_name(requested, installed_names) {
             return Ok(resolved);
         }
         if let Ok(fallback) = env::var("OCTOBOT_OLLAMA_MODEL") {
@@ -845,9 +844,7 @@ impl AiClient {
                     .iter()
                     .map(|model| model.model.as_str())
                     .collect::<Vec<_>>();
-                if let Some(resolved) =
-                    resolve_installed_model_name(fallback, installed.into_iter())
-                {
+                if let Some(resolved) = resolve_installed_model_name(fallback, installed) {
                     return Ok(resolved);
                 }
             }

@@ -15,6 +15,7 @@ use crate::{
         WorkspaceArtifact,
     },
     persistence::{event_type, reconstruct_state},
+    platform::{engineering_os_blueprint, platform_capabilities},
     plugins::host::NativePlugin,
     plugins::registry::PluginRegistry,
     remediation::{RemediationEngine, RiskLevel},
@@ -32,6 +33,92 @@ use crate::{
 
 use serde_json::json;
 use std::time::Duration;
+
+#[test]
+fn engineering_os_blueprint_covers_all_requested_capabilities() {
+    let blueprint = engineering_os_blueprint();
+    assert!(blueprint.runtime.contains("Tokio"));
+    assert!(blueprint.persistence.contains("SQLx"));
+    assert!(blueprint.local_models.contains("Ollama"));
+    assert_eq!(blueprint.capabilities.len(), 15);
+
+    let ids = blueprint
+        .capabilities
+        .iter()
+        .map(|capability| capability.id)
+        .collect::<Vec<_>>();
+    for expected in [
+        "memory-graph",
+        "coding-workspace",
+        "software-company",
+        "infra-architect",
+        "predictive-incidents",
+        "self-healing",
+        "security-ops",
+        "research-swarm",
+        "model-router",
+        "plugin-marketplace",
+        "live-infra-map",
+        "cost-optimizer",
+        "incident-replay",
+        "pair-programmer",
+        "engineering-os",
+    ] {
+        assert!(ids.contains(&expected), "missing {expected}");
+    }
+}
+
+#[test]
+fn platform_capabilities_include_required_design_sections() {
+    for capability in platform_capabilities() {
+        assert!(!capability.name.is_empty());
+        assert!(!capability.architecture.is_empty(), "{}", capability.id);
+        assert!(!capability.modules.is_empty(), "{}", capability.id);
+        assert!(!capability.database_schema.is_empty(), "{}", capability.id);
+        assert!(!capability.agents.is_empty(), "{}", capability.id);
+        assert!(!capability.workflow.is_empty(), "{}", capability.id);
+        assert!(!capability.tui.is_empty(), "{}", capability.id);
+        assert!(!capability.api.is_empty(), "{}", capability.id);
+        assert!(!capability.phases.is_empty(), "{}", capability.id);
+        assert!(!capability.crates.is_empty(), "{}", capability.id);
+        assert!(!capability.commands.is_empty(), "{}", capability.id);
+        assert!(!capability.security.is_empty(), "{}", capability.id);
+        assert!(!capability.scalability.is_empty(), "{}", capability.id);
+    }
+}
+
+#[test]
+fn platform_blueprint_preserves_local_first_terminal_native_requirements() {
+    let capabilities = platform_capabilities();
+    let model_router = capabilities
+        .iter()
+        .find(|capability| capability.id == "model-router")
+        .expect("model router capability");
+    assert!(
+        model_router
+            .architecture
+            .iter()
+            .any(|entry| entry.contains("Ollama"))
+    );
+    assert!(
+        model_router
+            .security
+            .iter()
+            .any(|entry| entry.contains("local default"))
+    );
+
+    let engineering_os = capabilities
+        .iter()
+        .find(|capability| capability.id == "engineering-os")
+        .expect("engineering OS capability");
+    assert!(
+        engineering_os
+            .api
+            .contains(&"GET /api/platform/capabilities")
+    );
+    assert!(engineering_os.crates.contains(&"ratatui"));
+    assert!(engineering_os.crates.contains(&"tokio"));
+}
 
 #[test]
 fn phase_30_runtime_descriptor_exposes_rust_native_agents() {
@@ -116,7 +203,7 @@ fn phase_30_model_router_selects_workload_specific_models() {
 
 #[test]
 fn ai_model_resolver_matches_installed_ollama_tags() {
-    let installed = vec![
+    let installed = [
         "qwen2.5-coder:7b".to_string(),
         "deepseek-r1:8b".to_string(),
         "mistral:latest".to_string(),
@@ -141,7 +228,7 @@ fn ai_model_resolver_matches_installed_ollama_tags() {
 
 #[test]
 fn ai_model_resolver_uses_compatible_local_fallbacks() {
-    let installed = vec![
+    let installed = [
         "llama3.1:8b".to_string(),
         "phi4:latest".to_string(),
         "qwen2.5:3b".to_string(),
@@ -1256,6 +1343,65 @@ fn infra_integrations_can_exist_without_fake_nodes() {
 }
 
 #[test]
+fn tick_does_not_synthesize_metrics_or_mutate_workflows() {
+    let mut state = OpsState::seed();
+    state.workflows.push(crate::models::Workflow {
+        id: "wf-real".into(),
+        name: "Real Workflow".into(),
+        owner: "dag-runtime".into(),
+        stage: "loaded".into(),
+        progress: 0,
+    });
+
+    state.tick();
+
+    assert!(state.metrics.is_empty());
+    assert_eq!(state.workflows[0].progress, 0);
+}
+
+#[test]
+fn infra_snapshots_drive_metrics_and_topology() {
+    let mut state = OpsState::seed();
+    state.apply_event(OpsEvent::InfrastructureSnapshotRecorded {
+        source: "unit-test".into(),
+        nodes: vec![
+            crate::models::InfraNode {
+                name: "checkout-api".into(),
+                kind: "service".into(),
+                health: 91,
+                cpu: 30,
+                memory: 50,
+            },
+            crate::models::InfraNode {
+                name: "checkout-primary".into(),
+                kind: "postgres-database".into(),
+                health: 96,
+                cpu: 20,
+                memory: 40,
+            },
+        ],
+        timestamp: now_ts(),
+    });
+
+    assert_eq!(state.metrics.last().copied(), Some(35));
+
+    let integrations = InfraIntegrations {
+        docker_socket: None,
+        kubernetes_url: None,
+        prometheus_url: None,
+        loki_url: None,
+        opensearch_url: None,
+        postgres_url: None,
+    };
+    let edges = integrations.build_topology(&state.infra);
+    assert!(edges.iter().any(|edge| {
+        edge.from == "checkout-api"
+            && edge.to == "checkout-primary"
+            && edge.relation == "connects-to"
+    }));
+}
+
+#[test]
 fn reducer_tracks_research_and_knowledge_features() {
     let mut state = OpsState::seed();
     state.apply_event(OpsEvent::ResearchCompleted {
@@ -1282,6 +1428,22 @@ fn reducer_tracks_research_and_knowledge_features() {
             .iter()
             .any(|edge| edge.from == "deploy-1188" && edge.to == "inc-042")
     );
+
+    state.apply_event(OpsEvent::AgentMemoryEntryRecorded {
+        entry: AgentMemoryEntry {
+            id: "memory-checkout".into(),
+            scope: "agent://research/memory".into(),
+            kind: "finding".into(),
+            key: "checkout-api".into(),
+            preview: "Qdrant result links checkout-api to checkout-primary".into(),
+            provenance: "semantic-memory".into(),
+            created_at: now_ts(),
+        },
+    });
+    assert_eq!(state.research_profile.subject, "checkout-api");
+    assert!(state.research_profile.signals.iter().any(|signal| {
+        signal.source.starts_with("agent-memory:") && signal.evidence.contains("checkout-primary")
+    }));
 }
 
 #[test]

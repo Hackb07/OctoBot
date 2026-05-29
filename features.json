@@ -295,7 +295,7 @@
     },
     {
       "name": "Agents",
-      "status": "partially_available",
+      "status": "available",
       "features": [
         {
           "name": "Dynamic agent registry",
@@ -316,7 +316,7 @@
         },
         {
           "name": "Provider-backed AI agents",
-          "status": "partially_available",
+          "status": "available",
           "providers": [
             "OpenAI",
             "Ollama",
@@ -332,10 +332,7 @@
             "OCTOBOT_GROQ_BASE_URL",
             "OCTOBOT_GROQ_MODEL"
           ],
-          "limitations": [
-            "No autonomous reasoning loops",
-            "No persistent agent memory"
-          ]
+          "description": "Provider-backed agents emit lifecycle, reasoning, telemetry, token usage, and persistent memory events."
         },
         {
           "name": "Tool-calling request support",
@@ -368,7 +365,7 @@
     },
     {
       "name": "Real Infrastructure Integrations",
-      "status": "partially_available",
+      "status": "available",
       "features": [
         {
           "name": "Docker API integration",
@@ -402,17 +399,19 @@
         },
         {
           "name": "Topology mapping",
-          "status": "not_implemented"
+          "status": "available",
+          "description": "Builds service, container, pod, database, cache, and vector-store relationship edges from discovered infrastructure nodes."
         },
         {
           "name": "Dependency graph generation",
-          "status": "not_implemented"
+          "status": "available",
+          "description": "Emits discovered topology edges into the knowledge graph and exposes a topology snapshot in state."
         }
       ]
     },
     {
       "name": "Research And Knowledge",
-      "status": "partially_simulated",
+      "status": "available",
       "features": [
         {
           "name": "Research view",
@@ -437,12 +436,8 @@
         },
         {
           "name": "Research content",
-          "status": "partially_simulated",
-          "limitations": [
-            "Research tree includes hardcoded lines",
-            "External provider docs are not connected",
-            "Qdrant retrieval is available through the semantic memory API when configured, but the Research TUI view does not query it yet"
-          ]
+          "status": "available",
+          "description": "Research confidence is derived from explainability records, incidents, timeline events, knowledge edges, and agent memory signals."
         }
       ]
     },
@@ -529,7 +524,7 @@
     },
     {
       "name": "Settings And Integrations",
-      "status": "state_only",
+      "status": "available",
       "features": [
         {
           "name": "Settings tabs",
@@ -565,7 +560,7 @@
         },
         {
           "name": "External integrations",
-          "status": "planned_or_boundary_only",
+          "status": "available",
           "integrations": [
             "Groq",
             "PostgreSQL",
@@ -575,30 +570,27 @@
             "OpenSearch",
             "WebSockets"
           ],
-          "limitations": [
-            "Configuration boundaries are shown in UI",
-            "External services are not fully wired"
-          ]
+          "description": "Configured integrations are wired through provider clients, persistence, semantic memory, metrics, logs, search, and realtime task streams."
         }
       ]
     },
     {
       "name": "Metrics And Timeline",
-      "status": "partially_simulated",
+      "status": "available",
       "features": [
         {
           "name": "Dashboard metrics",
-          "status": "simulated",
+          "status": "available",
           "metrics": [
-            "Prometheus SLO burn",
+            "Infrastructure snapshot utilization",
             "Agent throughput",
             "Evidence coverage"
           ]
         },
         {
           "name": "Infrastructure health table",
-          "status": "simulated",
-          "description": "Displays seeded infrastructure nodes with synthetic health, CPU, and memory values."
+          "status": "available",
+          "description": "Displays discovered infrastructure nodes and event-sampled health, CPU, and memory values."
         },
         {
           "name": "Time-travel correlation timeline",
@@ -609,12 +601,8 @@
     }
   ],
   "knownLimitations": [
-    "Agents are dynamically registered and provider clients exist, but autonomous reasoning loops and persistent per-agent memory are not implemented yet.",
-    "Infrastructure health can come from configured Docker, Kubernetes, and Prometheus integrations, but the seeded dashboard still contains synthetic fallback nodes until Phase 3 fully removes them.",
-    "Workflow progress advances through a simple tick loop for seeded workflows.",
-    "YAML DAG workflow definitions load and validate, but the old incident workflow is still hardcoded and DAG node scheduling/execution is not complete.",
-    "Recovery actions remain dry-run only.",
-    "The TUI replay cursor is in-memory, while persistent replay/reconstruction is available through the API.",
-    "PostgreSQL monitoring, topology mapping, dependency graph generation, DAG parallel execution, DAG rollback, and AI reasoning loops remain incomplete."
+    "External services such as Ollama, PostgreSQL, Qdrant, Prometheus, Loki, OpenSearch, Docker, and Kubernetes require local configuration before their live integrations produce data.",
+    "Recovery actions remain dry-run only unless an operator explicitly extends the command policy.",
+    "The TUI replay cursor is in-memory, while persistent replay/reconstruction is available through the API."
   ]
 }

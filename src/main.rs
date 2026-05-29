@@ -15,6 +15,7 @@ mod infra;
 mod models;
 mod observability;
 mod persistence;
+mod platform;
 mod plugins;
 mod remediation;
 mod reports;

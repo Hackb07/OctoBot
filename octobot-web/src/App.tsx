@@ -264,7 +264,7 @@ cargo run`}</pre>
 
       <footer>
         <span>OctoBot website built from repository documentation and scripts.</span>
-        <span>Run with <code>npm --prefix frontend run dev</code>.</span>
+        <span>Run with <code>npm --prefix octobot-web run dev</code>.</span>
       </footer>
     </main>
   );

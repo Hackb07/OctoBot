@@ -114,20 +114,26 @@ impl PersistenceRuntime {
     }
 
     pub(crate) async fn semantic_search(&self, query: &str) -> Result<Vec<MemorySearchResult>> {
-        let Some(memory) = &self.memory else {
+        if let Some(memory) = &self.memory {
+            return memory.search(query, None).await;
+        }
+        let Some(postgres) = &self.postgres else {
             return Ok(Vec::new());
         };
-        memory.search(query, None).await
+        postgres.search_memory(query, None).await
     }
 
     pub(crate) async fn incident_similarity_search(
         &self,
         query: &str,
     ) -> Result<Vec<MemorySearchResult>> {
-        let Some(memory) = &self.memory else {
+        if let Some(memory) = &self.memory {
+            return memory.search(query, Some("incident")).await;
+        }
+        let Some(postgres) = &self.postgres else {
             return Ok(Vec::new());
         };
-        memory.search(query, Some("incident")).await
+        postgres.search_memory(query, Some("incident")).await
     }
 }
 
@@ -214,6 +220,26 @@ impl PostgresStore {
             .context("upserting agent state")?;
         }
 
+        if let Some(document) = memory_document(event) {
+            sqlx::query(
+                "INSERT INTO semantic_memory (id, source, text, vector_id, metadata, created_at)
+                 VALUES ($1, $2, $3, $4, $5, now())
+                 ON CONFLICT (id) DO UPDATE
+                 SET source = EXCLUDED.source,
+                     text = EXCLUDED.text,
+                     vector_id = EXCLUDED.vector_id,
+                     metadata = EXCLUDED.metadata",
+            )
+            .bind(&document.id)
+            .bind(&document.source)
+            .bind(&document.text)
+            .bind(&document.id)
+            .bind(&document.metadata)
+            .execute(&mut *tx)
+            .await
+            .context("upserting semantic memory document")?;
+        }
+
         tx.commit().await.context("committing persistence tx")?;
         debug!(event_type, "persisted OpsEvent");
         Ok(())
@@ -230,6 +256,38 @@ impl PostgresStore {
         rows.into_iter()
             .map(|value| serde_json::from_value(value).context("deserializing replay event"))
             .collect()
+    }
+
+    async fn search_memory(
+        &self,
+        query: &str,
+        source_filter: Option<&str>,
+    ) -> Result<Vec<MemorySearchResult>> {
+        let pattern = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
+        let rows = sqlx::query_as::<_, (String, String, String, serde_json::Value)>(
+            "SELECT id, source, text, metadata
+             FROM semantic_memory
+             WHERE text ILIKE $1 ESCAPE '\\'
+               AND ($2::text IS NULL OR source = $2)
+             ORDER BY created_at DESC
+             LIMIT 10",
+        )
+        .bind(pattern)
+        .bind(source_filter)
+        .fetch_all(&self.pool)
+        .await
+        .context("searching PostgreSQL semantic memory")?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, source, text, metadata)| MemorySearchResult {
+                id: serde_json::Value::String(id),
+                score: 1.0,
+                source,
+                text,
+                metadata,
+            })
+            .collect())
     }
 }
 
@@ -584,6 +642,18 @@ fn memory_document(event: &OpsEvent) -> Option<MemoryDocument> {
                 definition.name, definition.node_count, definition.entrypoint
             ),
             metadata: json!({ "workflow_id": definition.id, "timestamp": definition.timestamp }),
+        }),
+        OpsEvent::AgentMemoryEntryRecorded { entry } => Some(MemoryDocument {
+            id: entry.id.clone(),
+            source: "agent-memory".into(),
+            text: format!("{} {} {}", entry.scope, entry.key, entry.preview),
+            metadata: json!({
+                "scope": entry.scope,
+                "kind": entry.kind,
+                "key": entry.key,
+                "provenance": entry.provenance,
+                "timestamp": entry.created_at
+            }),
         }),
         OpsEvent::ToolCallCompleted {
             id,

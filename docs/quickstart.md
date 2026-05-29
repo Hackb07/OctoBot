@@ -235,8 +235,8 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 PYTHONPATH=. .venv/bin/pytest
 PYTHONPATH=. .venv/bin/ruff check backend tests
-cd frontend && npm ci && npm run build && npm audit
-cd frontend/src-tauri && cargo check
+cd octobot-web && npm ci && npm run build && npm audit
+cd octobot-web/src-tauri && cargo check
 ```
 
 ## Next Steps

@@ -17,6 +17,7 @@ use tracing::info;
 use crate::{
     models::{AgentRole, AgentStatus, OpsEvent, OpsState},
     persistence::PersistenceRuntime,
+    platform::engineering_os_blueprint,
     utils::{next_agent_name, now_ts},
 };
 
@@ -44,6 +45,7 @@ pub(crate) async fn serve_api(
     let app = Router::new()
         .route("/health", get(health))
         .route("/api/state", get(snapshot))
+        .route("/api/platform/capabilities", get(platform_capabilities))
         .route("/api/plugins", get(plugins))
         .route("/api/processes", get(processes))
         .route("/api/syscalls", get(syscalls))
@@ -86,6 +88,10 @@ async fn health() -> impl IntoResponse {
 
 async fn snapshot(State(state): State<ApiState>) -> impl IntoResponse {
     Json(state.state_rx.borrow().clone())
+}
+
+async fn platform_capabilities() -> impl IntoResponse {
+    Json(engineering_os_blueprint())
 }
 
 async fn plugins(State(state): State<ApiState>) -> impl IntoResponse {

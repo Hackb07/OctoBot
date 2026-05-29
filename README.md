@@ -12,6 +12,7 @@ Use it to investigate incidents, run allowlisted infrastructure commands, coordi
 | [User Guide](docs/user-guide.md) | Commands and workflows |
 | [Deployment](docs/deployment.md) | Production setup |
 | [Phase Notes](docs/phase-25-29-completion.md) | Latest phase completion |
+| [Engineering OS Blueprint](docs/engineering-os-blueprint.md) | Next-generation feature blueprint and status |
 
 ## Install
 
@@ -45,6 +46,39 @@ cargo run
 | `[ ]` | Not complete |
 
 ## Phase Status
+
+### Next-Generation Feature Status
+
+The architecture contract, API surface, SQL migration scaffolding, command suggestions, docs, and tests for these features are complete. End-to-end product/runtime implementation is only marked complete when the feature works through the local-first Rust/TUI/API path, not just when it is designed.
+
+| Feature | Blueprint/API/Schema | Runtime Complete | Notes |
+|---|---:|---:|---|
+| AI Project Memory Graph | [x] | [ ] | Knowledge nodes/edges exist; full graph projector, semantic graph recall, cross-project sharing, and TUI graph navigation are not complete. |
+| Autonomous Coding Workspace | [x] | [ ] | Python coding pipeline and Rust runtime service exist; full Rust-native repo-wide generation, validation, repair, PR generation, and refactoring are not complete. |
+| Multi-Agent Software Company | [x] | [ ] | Agent registry, process table, IPC, and swarm plans exist; full role-specialized autonomous company workflow is not complete. |
+| Infrastructure Architect | [x] | [ ] | Infra integrations exist; natural-language Terraform, Kubernetes, Helm, Compose, and CI/CD generation are not complete. |
+| Predictive Incident Engine | [x] | [ ] | Observability and incident analysis exist; forecasting, historical correlation, risk scoring, and early warning engine are not complete. |
+| Self-Healing Infrastructure | [x] | [ ] | Remediation proposals and approvals exist; autonomous recovery, rollback, cluster repair, network repair, and DB recovery workflows are not complete. |
+| AI Security Operations Center | [x] | [ ] | Security policy, scanners, and findings exist; full SOC reporting, dependency auditing, container analysis, threat-intel integration, and posture assessment are not complete. |
+| Research Swarm | [x] | [ ] | Research confidence records exist; multi-agent docs/repo/benchmark/trend research swarm is not complete. |
+| Smart Model Router | [x] | [ ] | Local model routing exists; full cost, latency, quality scoring, and provider support for Ollama/OpenAI/Anthropic/Gemini/DeepSeek/Mistral/Qwen is not complete. |
+| Plugin Marketplace | [x] | [ ] | Plugin registry, SDK, signatures, and package import exist; full registry, version management, permissions, sandboxing, community ecosystem, and hot loading are not complete. |
+| Live Infrastructure Map | [x] | [ ] | Topology edges and infra panels exist; real-time interactive map with health navigation is not complete. |
+| Cost Optimization Engine | [x] | [ ] | Schema and command surface exist; utilization analysis, cloud cost monitoring, waste detection, capacity planning, and forecasting are not complete. |
+| Incident Replay Studio | [x] | [ ] | Event replay and cursor exist; timeline reconstruction, root-cause visualization, recovery path analysis, and training mode are not complete. |
+| AI Pair Programmer | [x] | [ ] | Chat and coding tools exist; full interactive pair programming with context-aware recommendations, refactoring, debugging, and test generation is not complete. |
+| AI-Native Engineering Operating System | [x] | [ ] | Core control plane exists; complete unified OS across engineering, infra, security, research, remediation, orchestration, memory, and automation is not complete. |
+
+Completed foundation items:
+
+| Foundation Item | Status | Main Files |
+|---|---:|---|
+| Typed Rust feature catalog | [x] | `src/platform/mod.rs` |
+| Capability API endpoint | [x] | `GET /api/platform/capabilities` in `src/api.rs` |
+| Persistent schema scaffolding | [x] | `migrations/0002_engineering_os.sql` |
+| TUI command suggestions | [x] | `src/constants.rs` |
+| Blueprint documentation | [x] | `docs/engineering-os-blueprint.md` |
+| Contract tests | [x] | `src/tests.rs` |
 
 ### Rust Operations Phases
 
@@ -329,7 +363,7 @@ flowchart LR
 | Repository indexer | [x] | `backend/octobot_orchestrator/indexer/repository.py` |
 | Coding memory | [x] | `backend/octobot_orchestrator/memory/store.py` |
 | Plugin SDK | [x] | `backend/octobot_orchestrator/plugins/sdk.py` |
-| Desktop frontend | [x] | `frontend/` |
+| Desktop frontend | [x] | `octobot-web/` |
 | Rust-native AI runtime migration | [x] | `src/ai/`, `src/agents/`, `src/workflows/`, `src/runtime/` |
 
 ## Tech Stack
@@ -375,7 +409,7 @@ Rust-native local model profiles:
 | `src/` | Rust TUI, API, runtime, security, workflows |
 | `src/runtime_service.rs` | Standalone Rust tool runtime |
 | `backend/` | Python autonomous orchestrator |
-| `frontend/` | React and Tauri desktop app |
+| `octobot-web/` | React and Tauri desktop app |
 | `config/` | Environment and service configuration |
 | `docker/` | Service Dockerfiles |
 | `docker-compose.yml` | Dev and deployment profiles |
@@ -439,7 +473,7 @@ OCTOBOT_RUNTIME_ONLY=1 cargo run
 Frontend app:
 
 ```bash
-cd frontend
+cd octobot-web
 npm ci
 npm run dev
 ```
@@ -455,7 +489,7 @@ npm run dev
 | Python lint | [x] | `PYTHONPATH=. .venv/bin/ruff check backend tests` |
 | Frontend build | [x] | `npm ci && npm run build` |
 | Frontend audit | [x] | `npm audit` |
-| Tauri shell | [x] | `cargo check` in `frontend/src-tauri` |
+| Tauri shell | [x] | `cargo check` in `octobot-web/src-tauri` |
 | Compose config | [x] | `docker compose --profile single-node config` |
 
 Production deployment requires these secrets and paths:

@@ -16,7 +16,7 @@ OctoBot now includes these platform surfaces:
 - Rust runtime WebSocket service in `src/runtime_service.rs` with local execution, Docker execution, command policy, filesystem operations, stdout/stderr streaming, timeouts, and cancellation
 - Autonomous execution loop with planning, tool execution, provider-edit patch generation, validation gates, Debugger Agent repair, replayable events, and execution reports
 - SSE and WebSocket task streams, replay API, Prometheus-compatible metrics, trace export, and structured log export
-- React + TypeScript + Vite frontend and Tauri desktop shell under `frontend/`
+- React + TypeScript + Vite frontend and Tauri desktop shell under `octobot-web/`
 - Plugin SDK with manifest validation, permission scopes, signed manifest verification, lock records, scaffolding, tests, and examples
 - Dockerfiles, Compose profiles, service-token auth, TLS reverse-proxy config, healthchecks, and production env template
 
@@ -72,7 +72,7 @@ OCTOBOT_RUNTIME_ONLY=1 cargo run
 Start the frontend:
 
 ```bash
-cd frontend
+cd octobot-web
 npm ci
 npm run dev
 ```
@@ -113,8 +113,8 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 PYTHONPATH=. .venv/bin/pytest
 PYTHONPATH=. .venv/bin/ruff check backend tests
-cd frontend && npm ci && npm run build && npm audit
-cd frontend/src-tauri && cargo check
+cd octobot-web && npm ci && npm run build && npm audit
+cd octobot-web/src-tauri && cargo check
 OCTOBOT_SERVICE_TOKEN=production-token \
 OCTOBOT_TLS_CERT=/path/to/tls.crt \
 OCTOBOT_TLS_KEY=/path/to/tls.key \

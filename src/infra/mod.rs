@@ -115,12 +115,12 @@ impl InfraIntegrations {
             }
         }
 
-        // Service → database: link services to databases by name substring
+        // Service → database: link services to databases by name substring.
         for node in nodes {
             if node.kind == "service" || node.kind == "deployment" {
                 let svc_name = node.name.split('-').next().unwrap_or(&node.name);
                 for db_node in nodes {
-                    if (db_node.kind == "database" || db_node.kind == "vector-db")
+                    if is_database_kind(&db_node.kind)
                         && (db_node.name.contains(svc_name)
                             || svc_name.contains(
                                 db_node
@@ -228,6 +228,13 @@ impl InfraIntegrations {
         }
         Ok(())
     }
+}
+
+fn is_database_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "database" | "postgres-database" | "mysql-database" | "redis-cache" | "vector-db"
+    )
 }
 
 fn urlencoding(input: &str) -> String {

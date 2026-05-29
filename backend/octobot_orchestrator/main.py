@@ -9,8 +9,11 @@ from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocke
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from .contracts import CodingTaskRequest, CodingTaskState, RuntimeEvent, RuntimeEventType, TaskStatus
+from .env import load_dotenv
 from .workflows.autonomous_loop import AutonomousExecutionLoop
 
+
+load_dotenv()
 
 app = FastAPI(title="OctoBot Autonomous Orchestrator", version="0.1.0")
 loop = AutonomousExecutionLoop()

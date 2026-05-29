@@ -69,7 +69,7 @@ pub(crate) fn syscall_limit() -> usize {
         .unwrap_or(DEFAULT_SYSCALL_LIMIT)
 }
 
-pub(crate) const COMMAND_SUGGESTIONS: [&str; 53] = [
+pub(crate) const COMMAND_SUGGESTIONS: [&str; 65] = [
     "multi-agent Assess Ollama readiness and report findings",
     "investigate local_model_health",
     "spawn-agent planner",
@@ -123,4 +123,16 @@ pub(crate) const COMMAND_SUGGESTIONS: [&str; 53] = [
     "agent spawn executor",
     "login ollama <url>",
     "login ollama http://localhost:11434",
+    "code plan fix failing test",
+    "code index .",
+    "code review current patch",
+    "infra generate terraform private api",
+    "infra generate k8s api service",
+    "cost analyze cluster",
+    "cost forecast monthly",
+    "security scan workspace",
+    "soc report",
+    "research swarm rust async runtimes",
+    "model route coding",
+    "topology refresh",
 ];

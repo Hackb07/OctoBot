@@ -109,7 +109,7 @@ Before deployment, run:
 cargo clippy --all-targets -- -D warnings
 PYTHONPATH=. .venv/bin/pytest
 PYTHONPATH=. .venv/bin/ruff check backend tests
-cd frontend && npm audit
+cd octobot-web && npm audit
 ```
 
 For Compose deployments, set these values before `docker compose up`:

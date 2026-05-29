@@ -166,12 +166,12 @@ setup_project() {
   .venv/bin/pip install -e ".[dev]"
 
   log "Installing frontend dependencies"
-  npm --prefix frontend install
+  npm --prefix octobot-web install
 
   log "Building and testing OctoBot"
   cargo test
   PYTHONPATH=. .venv/bin/pytest
-  npm --prefix frontend run build
+  npm --prefix octobot-web run build
 }
 
 main() {

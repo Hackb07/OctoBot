@@ -39,7 +39,7 @@ That's it. OctoBot runs immediately with zero configuration — all optional fea
 - [ ] `git clone https://github.com/your-org/OctoBot.git`
 - [ ] `cd OctoBot`
 - [ ] `cargo build --release` (first build: ~3 min)
-- [ ] `cargo test` — verify 42 Rust tests pass
+- [ ] `cargo test` — verify 51 Rust tests pass
 - [ ] `cargo check` — verify zero compilation errors
 - [ ] `cargo clippy --all-targets -- -D warnings` — verify strict Rust linting
 - [ ] `PYTHONPATH=. .venv/bin/pytest` — verify Python orchestrator tests
@@ -138,13 +138,13 @@ Each backend is independently optional. OctoBot runs without any of them.
 
 ### 6. Verify Everything Works
 
-- [ ] `cargo test` → 42 passed
+- [ ] `cargo test` → 51 passed
 - [ ] `cargo check` → zero errors
 - [ ] `cargo clippy --all-targets -- -D warnings` → zero warnings
 - [ ] `PYTHONPATH=. .venv/bin/pytest` → 23 passed
 - [ ] `PYTHONPATH=. .venv/bin/ruff check backend tests` → all checks passed
-- [ ] `cd frontend && npm ci && npm run build && npm audit` → build passes and 0 vulnerabilities
-- [ ] `cd frontend/src-tauri && cargo check` → desktop shell compiles
+- [ ] `cd octobot-web && npm ci && npm run build && npm audit` → build passes and 0 vulnerabilities
+- [ ] `cd octobot-web/src-tauri && cargo check` → desktop shell compiles
 - [ ] Launch with `./target/release/OctoBot` → TUI shows dashboard
 - [ ] Press `?` → help overlay appears
 - [ ] `/exec uptime` → command runs

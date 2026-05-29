@@ -7,6 +7,10 @@ from dataclasses import dataclass
 
 import httpx
 
+from .env import load_dotenv
+
+load_dotenv()
+
 
 @dataclass(frozen=True)
 class ModelRequest:
@@ -58,7 +62,10 @@ class OpenAIProvider(ModelProvider):
             from openai import AsyncOpenAI
         except ImportError as error:
             raise RuntimeError("openai extra is not installed") from error
-        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY is not set")
+        client = AsyncOpenAI(api_key=api_key)
         stream = await client.chat.completions.create(
             model=request.model or os.getenv("OCTOBOT_OPENAI_MODEL", "gpt-4.1-mini"),
             messages=[
@@ -82,8 +89,11 @@ class GroqProvider(ModelProvider):
             from openai import AsyncOpenAI
         except ImportError as error:
             raise RuntimeError("openai extra is not installed") from error
+        api_key = os.getenv("OCTOBOT_GROQ_API_KEY")
+        if not api_key:
+            raise RuntimeError("OCTOBOT_GROQ_API_KEY is not set")
         client = AsyncOpenAI(
-            api_key=os.getenv("OCTOBOT_GROQ_API_KEY"),
+            api_key=api_key,
             base_url=os.getenv("OCTOBOT_GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
         )
         stream = await client.chat.completions.create(
@@ -109,7 +119,10 @@ class AnthropicProvider(ModelProvider):
             from anthropic import AsyncAnthropic
         except ImportError as error:
             raise RuntimeError("anthropic extra is not installed") from error
-        client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY is not set")
+        client = AsyncAnthropic(api_key=api_key)
         async with client.messages.stream(
             model=request.model or os.getenv("OCTOBOT_ANTHROPIC_MODEL", "claude-sonnet-4-5"),
             max_tokens=2048,

@@ -855,22 +855,6 @@ impl OpsState {
 
     pub(crate) fn tick(&mut self) {
         self.uptime_secs += 1;
-        let next = (self.metrics.last().copied().unwrap_or(50) + 7 + self.uptime_secs) % 100;
-        self.metrics.push(next.max(18));
-        if self.metrics.len() > 30 {
-            self.metrics.remove(0);
-        }
-
-        for workflow in &mut self.workflows {
-            workflow.progress = ((workflow.progress + 3) % 101).max(12);
-        }
-
-        for (idx, node) in self.infra.iter_mut().enumerate() {
-            node.cpu = ((node.cpu as u16 + 5 + idx as u16) % 100) as u8;
-            node.memory = ((node.memory as u16 + 2 + idx as u16) % 100) as u8;
-            node.health = 100u8.saturating_sub(node.cpu.saturating_sub(76));
-        }
-
         self.health = self
             .infra
             .iter()
@@ -1589,6 +1573,7 @@ impl OpsState {
             }
             OpsEvent::UserCommandEntered { .. } => {}
             OpsEvent::MetricsSampled { cpu, memory, .. } => {
+                self.record_metric_sample(((*cpu as u64) + (*memory as u64)) / 2);
                 if let Some(node) = self.infra.first_mut() {
                     node.cpu = *cpu;
                     node.memory = *memory;
@@ -1608,6 +1593,17 @@ impl OpsState {
                     .sum::<u16>()
                     .checked_div(self.infra.len() as u16)
                     .unwrap_or(0) as u8;
+                if !self.infra.is_empty() {
+                    let cpu_avg = self.infra.iter().map(|node| node.cpu as u64).sum::<u64>()
+                        / self.infra.len() as u64;
+                    let mem_avg = self
+                        .infra
+                        .iter()
+                        .map(|node| node.memory as u64)
+                        .sum::<u64>()
+                        / self.infra.len() as u64;
+                    self.record_metric_sample((cpu_avg + mem_avg) / 2);
+                }
                 self.record_timeline(TimelineEvent {
                     id: format!("time-infra-snapshot-{source}-{timestamp}"),
                     timestamp: timestamp.clone(),
@@ -1795,6 +1791,30 @@ impl OpsState {
             }
             OpsEvent::AgentMemoryEntryRecorded { entry } => {
                 self.agent_memory.push(entry.clone());
+                self.research_profile.subject = entry.key.clone();
+                self.research_profile.last_reviewed = entry.created_at.clone();
+                self.research_profile.signals.push(ResearchSignal {
+                    source: format!("agent-memory:{}", entry.scope),
+                    evidence: entry.preview.clone(),
+                    reliability: 82,
+                    contradiction: false,
+                });
+                let reliability_total: u32 = self
+                    .research_profile
+                    .signals
+                    .iter()
+                    .map(|signal| signal.reliability as u32)
+                    .sum();
+                self.research_profile.evidence_reliability =
+                    (reliability_total / self.research_profile.signals.len() as u32) as u8;
+                self.research_profile.ranking = self
+                    .research_profile
+                    .evidence_reliability
+                    .saturating_sub(self.research_profile.contradiction_count.saturating_mul(3));
+                if self.research_profile.signals.len() > 12 {
+                    let drop_count = self.research_profile.signals.len() - 12;
+                    self.research_profile.signals.drain(0..drop_count);
+                }
             }
             OpsEvent::AppPackageImported { package } => {
                 if let Some(existing) = self
@@ -2085,6 +2105,13 @@ impl OpsState {
             last_reviewed: timestamp.into(),
             signals,
         };
+    }
+
+    fn record_metric_sample(&mut self, value: u64) {
+        self.metrics.push(value.min(100));
+        if self.metrics.len() > 30 {
+            self.metrics.remove(0);
+        }
     }
 
     fn refresh_research_from_explainability(&mut self, record: &ExplainabilityRecord) {

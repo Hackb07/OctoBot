@@ -4,7 +4,9 @@ use std::{
     time::Duration,
 };
 
-use crossterm::event::{self, Event as TerminalEvent, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{
+    self, Event as TerminalEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+};
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Alignment, Constraint, Layout, Position, Rect},
@@ -1324,6 +1326,13 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
+        {
+            self.exit = true;
+            return;
+        }
+
         if self.command_mode {
             match key.code {
                 KeyCode::Esc => {
@@ -1339,21 +1348,23 @@ impl App {
                 KeyCode::Backspace => {
                     self.command.pop();
                 }
-                KeyCode::Char(c) => self.command.push(c),
+                KeyCode::Char(c) if command_char_allowed(key.modifiers) => self.command.push(c),
                 _ => {}
             }
             return;
         }
 
         match key.code {
-            KeyCode::Char('q') => self.exit = true,
+            KeyCode::Char(c) if c.eq_ignore_ascii_case(&'q') => self.exit = true,
             KeyCode::Char('/') => self.command_mode = true,
             KeyCode::Char('?') => self.help_mode = !self.help_mode,
-            KeyCode::Char('h') => self.help_mode = !self.help_mode,
+            KeyCode::Char(c) if c.eq_ignore_ascii_case(&'h') => self.help_mode = !self.help_mode,
             KeyCode::Tab => self.next_nav(),
             KeyCode::BackTab => self.prev_nav(),
-            KeyCode::Char('j') | KeyCode::Down => self.next_nav(),
-            KeyCode::Char('k') | KeyCode::Up => self.prev_nav(),
+            KeyCode::Char(c) if c.eq_ignore_ascii_case(&'j') => self.next_nav(),
+            KeyCode::Down => self.next_nav(),
+            KeyCode::Char(c) if c.eq_ignore_ascii_case(&'k') => self.prev_nav(),
+            KeyCode::Up => self.prev_nav(),
             KeyCode::Char(c @ '1'..='9') => {
                 self.selected_nav = (c as usize - '1' as usize).min(NAV_ITEMS.len() - 1)
             }
@@ -2179,6 +2190,10 @@ impl App {
         self.command.clear();
         self.command_mode = false;
     }
+}
+
+fn command_char_allowed(modifiers: KeyModifiers) -> bool {
+    modifiers.is_empty() || modifiers == KeyModifiers::SHIFT
 }
 pub(crate) fn command_completion(input: &str) -> Option<&'static str> {
     let normalized = input.trim_start();

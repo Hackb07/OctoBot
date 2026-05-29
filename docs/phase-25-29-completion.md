@@ -26,8 +26,8 @@ platform phases and the follow-up production hardening work.
 
 ## Phase 27 - Frontend and Desktop Experience
 
-- `frontend/` now contains a React + TypeScript + Vite app.
-- `frontend/src-tauri/` contains the Tauri desktop shell.
+- `octobot-web/` now contains a React + TypeScript + Vite app.
+- `octobot-web/src-tauri/` contains the Tauri desktop shell.
 - The first UI surface covers task history, execution monitoring, validation
   state, and live task events.
 - Diff, approval, and memory-search panels are present in the desktop UI.
@@ -63,8 +63,8 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 PYTHONPATH=. .venv/bin/pytest
 PYTHONPATH=. .venv/bin/ruff check backend tests
-cd frontend && npm ci && npm run build && npm audit
-cd frontend/src-tauri && cargo check
+cd octobot-web && npm ci && npm run build && npm audit
+cd octobot-web/src-tauri && cargo check
 OCTOBOT_SERVICE_TOKEN=production-token \
 OCTOBOT_TLS_CERT=/tmp/octobot.crt \
 OCTOBOT_TLS_KEY=/tmp/octobot.key \
@@ -76,7 +76,7 @@ Current verified results:
 
 | Check | Result |
 |---|---|
-| Rust tests | 42 passed |
+| Rust tests | 51 passed |
 | Python tests | 23 passed |
 | Rust Clippy | zero warnings |
 | Python Ruff | all checks passed |

@@ -59,13 +59,13 @@ start_or_reuse \
 
 if is_up "http://127.0.0.1:5173/"; then
   printf '[reuse] frontend-dev already running at http://127.0.0.1:5173/\n'
-elif [ -d frontend/node_modules ]; then
+elif [ -d octobot-web/node_modules ]; then
   printf '[start] frontend-dev\n'
-  (cd frontend && npm run dev -- --host 127.0.0.1) >"$LOG_DIR/frontend.log" 2>&1 &
+  (cd octobot-web && npm run dev -- --host 127.0.0.1) >"$LOG_DIR/frontend.log" 2>&1 &
   printf '%s\n' "$!" >"$LOG_DIR/frontend.log.pid"
   printf '[ok] frontend-dev starting at http://127.0.0.1:5173/; log=%s\n' "$LOG_DIR/frontend.log"
 else
-  printf '[skip] frontend-dev dependencies missing; run: cd frontend && npm install\n'
+  printf '[skip] frontend-dev dependencies missing; run: cd octobot-web && npm install\n'
 fi
 
 printf '\nRun the full Rust TUI/control API in another terminal when needed:\n'
